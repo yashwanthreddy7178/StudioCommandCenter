@@ -5,6 +5,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from src.main import app
 from src.engine import engine
+from src.models import GPU_PROFILES
 from src.world import TenantProductionWorld
 from services.common.models import ActionType
 
@@ -35,7 +36,18 @@ async def test_tenant_world_initialization():
     assert world is not None
     assert len(world.workers) == 8
     assert world.is_incident_active is False
-    assert world.baseline_throughput_fpm == 118.6
+
+    # The baseline must be derived from the GPU profiles the workers actually run
+    # on. A hardcoded constant would make a healthy fleet read as permanently
+    # degraded and feed a bogus shortfall into the impact projection.
+    expected_fpm = round(
+        sum(
+            60.0 / GPU_PROFILES[w.gpu_type].baseline_duration_sec
+            for w in world.workers.values()
+        ),
+        1,
+    )
+    assert world.baseline_throughput_fpm == expected_fpm
 
 
 @pytest.mark.asyncio

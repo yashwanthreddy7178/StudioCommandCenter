@@ -95,6 +95,13 @@ class SimulationEngine:
             new_version=new_version,
             new_tile_size=new_tile_size,
         )
+        # Written once, at the moment of the change, so its timestamp precedes the
+        # metric inflection rather than being inferred from it.
+        self.exporter.emit_config_event(
+            world,
+            event="renderer_config_loaded",
+            affected_worker_ids=target_workers,
+        )
         logger.info(
             "Incident triggered on tenant world",
             extra={"tenant_id": tenant_id, "scenario": scenario_type, "affected_workers": target_workers}
@@ -113,6 +120,7 @@ class SimulationEngine:
             raise KeyError(f"Tenant world '{tenant_id}' not found")
 
         world.rollback_renderer(target_version=target_version, target_tile_size=target_tile_size)
+        self.exporter.emit_config_event(world, event="renderer_config_rolled_back")
         logger.info(
             "Renderer rolled back on tenant world",
             extra={"tenant_id": tenant_id, "target_version": target_version, "tile_size": target_tile_size}

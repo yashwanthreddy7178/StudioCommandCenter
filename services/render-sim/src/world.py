@@ -18,13 +18,36 @@ class TenantProductionWorld:
         self.tile_size = 256
         self.is_incident_active = False
         self.incident_type: Optional[str] = None
-        self.baseline_throughput_fpm = 118.6
-        self.observed_throughput_fpm = 118.6
         self.queue_depth = 18432
         self.last_updated = datetime.utcnow()
         self.workers: Dict[str, RenderWorkerNode] = {}
-        
+
         self._initialize_workers(num_workers)
+
+        # Derived from the same grounded GPU profiles the workers run on, so a
+        # healthy fleet sits at its own baseline. A hardcoded constant here would
+        # make every world read as permanently degraded and would feed a bogus
+        # shortfall into the impact projection.
+        self.baseline_throughput_fpm = self._fleet_throughput_fpm(baseline=True)
+        self.observed_throughput_fpm = self.baseline_throughput_fpm
+
+    def _fleet_throughput_fpm(self, baseline: bool = False) -> float:
+        """Frames per minute across the fleet.
+
+        The sum of per-worker rates, not the mean duration scaled by worker count:
+        a slow worker contributes fewer frames, it does not slow the others down.
+        """
+        total = 0.0
+        for worker in self.workers.values():
+            if worker.is_drained:
+                continue
+            if baseline:
+                duration = GPU_PROFILES[worker.gpu_type].baseline_duration_sec
+            else:
+                duration = worker.current_frame_duration_sec
+            if duration > 0:
+                total += 60.0 / duration
+        return round(total, 1)
 
     def _initialize_workers(self, num_workers: int) -> None:
         """Initializes worker nodes using grounded GPU benchmark profiles."""
@@ -115,13 +138,13 @@ class TenantProductionWorld:
                 worker.gpu_utilization_pct = max(80.0, min(99.0, profile.baseline_gpu_util + random.uniform(-2.0, 2.0)))
                 worker.current_frame_duration_sec = max(18.0, profile.baseline_duration_sec + random.uniform(-2.0, 2.0))
 
-        # Recalculate fleet throughput
+        # Recalculate fleet throughput, smoothed so a single slow frame does not
+        # whipsaw the projection.
         if active_count > 0:
-            avg_duration = sum(w.current_frame_duration_sec for w in self.workers.values() if not w.is_drained) / active_count
-            # frames per minute across entire fleet = (60 / avg_duration) * active_workers
-            current_fpm = (60.0 / avg_duration) * active_count
-            # Smooth with moving average
-            self.observed_throughput_fpm = round(0.8 * self.observed_throughput_fpm + 0.2 * current_fpm, 1)
+            current_fpm = self._fleet_throughput_fpm()
+            self.observed_throughput_fpm = round(
+                0.8 * self.observed_throughput_fpm + 0.2 * current_fpm, 1
+            )
         
         # In degraded state, queue depth accumulates
         if degraded_count > 0:

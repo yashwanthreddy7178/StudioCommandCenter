@@ -53,6 +53,16 @@ class Settings(BaseSettings):
         return base if base.endswith("/v1/metrics") else f"{base}/v1/metrics"
 
     @property
+    def otlp_logs_endpoint(self) -> str:
+        """Full OTLP/HTTP logs URL, derived from the same base endpoint."""
+        base = self.grafana_otlp_endpoint_url.rstrip("/")
+        if not base:
+            return ""
+        if base.endswith("/v1/metrics"):
+            base = base[: -len("/v1/metrics")]
+        return base if base.endswith("/v1/logs") else f"{base}/v1/logs"
+
+    @property
     def otlp_export_enabled(self) -> bool:
         """True when all three ingest credentials are present."""
         return bool(

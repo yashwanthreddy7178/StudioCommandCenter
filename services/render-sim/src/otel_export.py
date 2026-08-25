@@ -11,6 +11,7 @@ section 5.4 and the localization test in section 6.2 both depend on.
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import datetime
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
@@ -75,9 +76,15 @@ class OTelTelemetryExporter:
         # Latest state per tenant, read by the observable gauge callbacks.
         self._worlds: Dict[str, TenantProductionWorld] = {}
         self._provider: Optional[MeterProvider] = None
+        self._log_provider: Optional[Any] = None
+        self._farm_logger: Optional[logging.Logger] = None
+        # Worker status lines are throttled to the export interval; the simulation
+        # ticks far faster than anything needs to be logged.
+        self._last_worker_log_at: Dict[str, datetime] = {}
 
         if settings.otlp_export_enabled:
             self._start_otlp_pipeline()
+            self._start_log_pipeline()
         else:
             logger.info(
                 "OTLP export disabled; set GRAFANA_OTLP_ENDPOINT_URL, "
@@ -132,6 +139,81 @@ class OTelTelemetryExporter:
                 "interval_sec": settings.otel_export_interval_sec,
             },
         )
+
+    def _start_log_pipeline(self) -> None:
+        """Builds the OTLP/HTTP log pipeline feeding Loki.
+
+        Farm events go to a dedicated logger with propagation disabled so the
+        service's own stdout logging is not shipped upstream as well.
+        """
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+
+        credential = f"{settings.grafana_otlp_instance_id}:{settings.grafana_access_policy_token}"
+        encoded = base64.b64encode(credential.encode("ascii")).decode("ascii")
+
+        exporter = OTLPLogExporter(
+            endpoint=settings.otlp_logs_endpoint,
+            headers={"Authorization": f"Basic {encoded}"},
+        )
+        self._log_provider = LoggerProvider(
+            resource=Resource.create({"service.name": settings.service_name})
+        )
+        self._log_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+
+        farm_logger = logging.getLogger("render-farm-events")
+        farm_logger.setLevel(logging.INFO)
+        farm_logger.propagate = False
+        if not farm_logger.handlers:
+            farm_logger.addHandler(
+                LoggingHandler(level=logging.INFO, logger_provider=self._log_provider)
+            )
+        self._farm_logger = farm_logger
+
+        logger.info(
+            "OTLP log pipeline started",
+            extra={"endpoint": settings.otlp_logs_endpoint},
+        )
+
+    def emit_config_event(
+        self,
+        world: TenantProductionWorld,
+        event: str,
+        affected_worker_ids: Optional[List[str]] = None,
+    ) -> None:
+        """Emits the discrete configuration-change line for a world.
+
+        This is the evidence behind the temporal precedence test: it is written
+        once, at the moment the change is applied, so its timestamp can be
+        compared against the metric inflection rather than inferred from it.
+
+        Identifying fields are duplicated into the message body because the OTLP
+        to Loki mapping promotes only some attributes to stream labels; a line
+        filter works regardless of how the mapping lands.
+        """
+        targets = affected_worker_ids or sorted(world.workers)
+        body = (
+            f"event={event} tenant_id={world.tenant_id} "
+            f"renderer_version={world.renderer_version} tile_size={world.tile_size} "
+            f"workers={','.join(targets)}"
+        )
+        attributes = {
+            "event": event,
+            "tenant_id": world.tenant_id,
+            "renderer_version": world.renderer_version,
+            "tile_size": world.tile_size,
+            "worker_ids": ",".join(targets),
+        }
+
+        self.buffer.add_log({
+            "timestamp": datetime.utcnow().isoformat(),
+            "labels": {"tenant_id": world.tenant_id, "level": "info", "event": event},
+            "line": body,
+        })
+
+        if self._farm_logger is not None:
+            self._farm_logger.info(body, extra=attributes)
 
     # ------------------------------------------------------------------
     # Observable gauge callbacks
@@ -259,21 +341,27 @@ class OTelTelemetryExporter:
             },
         })
 
+        if not self._should_log_workers(world.tenant_id, now):
+            return
+
         for wid, worker in world.workers.items():
             if worker.is_degraded:
                 level = "warn"
                 line = (
-                    f"[WARN] Worker {wid} [{worker.renderer_version}] "
+                    f"[WARN] tenant_id={world.tenant_id} worker_id={wid} "
+                    f"renderer_version={worker.renderer_version} "
                     f"tile_size={worker.tile_size} VRAM paging stall, "
                     f"duration={worker.current_frame_duration_sec:.1f}s"
                 )
             else:
                 level = "info"
                 line = (
-                    f"[INFO] Worker {wid} [{worker.renderer_version}] "
+                    f"[INFO] tenant_id={world.tenant_id} worker_id={wid} "
+                    f"renderer_version={worker.renderer_version} "
                     f"completed frame in {worker.current_frame_duration_sec:.1f}s, "
                     f"gpu_util={worker.gpu_utilization_pct:.1f}%"
                 )
+
             self.buffer.add_log({
                 "timestamp": now.isoformat(),
                 "labels": {
@@ -284,14 +372,38 @@ class OTelTelemetryExporter:
                 "line": line,
             })
 
+            if self._farm_logger is not None:
+                attributes = {
+                    "tenant_id": world.tenant_id,
+                    "worker_id": wid,
+                    "renderer_version": worker.renderer_version,
+                    "gpu_type": worker.gpu_type,
+                }
+                if level == "warn":
+                    self._farm_logger.warning(line, extra=attributes)
+                else:
+                    self._farm_logger.info(line, extra=attributes)
+
+    def _should_log_workers(self, tenant_id: str, now: datetime) -> bool:
+        """Rate-limits per-worker status lines to the configured export interval."""
+        last = self._last_worker_log_at.get(tenant_id)
+        if last is not None:
+            elapsed = (now - last).total_seconds()
+            if elapsed < settings.otel_export_interval_sec:
+                return False
+        self._last_worker_log_at[tenant_id] = now
+        return True
+
     async def close(self) -> None:
-        """Flushes and shuts down the OTLP pipeline."""
-        if self._provider is None:
-            return
-        try:
-            self._provider.force_flush(timeout_millis=5000)
-            self._provider.shutdown()
-        except Exception as exc:
-            logger.warning(
-                "Error shutting down OTLP pipeline", extra={"error": str(exc)}
-            )
+        """Flushes and shuts down the OTLP pipelines."""
+        for name, provider in (("metric", self._provider), ("log", self._log_provider)):
+            if provider is None:
+                continue
+            try:
+                provider.force_flush(timeout_millis=5000)
+                provider.shutdown()
+            except Exception as exc:
+                logger.warning(
+                    "Error shutting down OTLP pipeline",
+                    extra={"pipeline": name, "error": str(exc)},
+                )
