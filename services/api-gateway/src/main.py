@@ -7,8 +7,8 @@ import httpx
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from services.api-gateway.src.config import settings
-from services.api-gateway.src.lease import lease_manager
+from src.config import settings
+from src.lease import lease_manager
 from services.common.models import ApprovalRequest, RunDocument, TenantLease
 from services.common.telemetry import setup_logging
 

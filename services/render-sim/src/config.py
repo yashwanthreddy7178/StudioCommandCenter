@@ -1,12 +1,23 @@
 """Configuration settings for render-sim."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# services/render-sim/src/config.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
     """Render simulator service configuration."""
-    model_config = SettingsConfigDict(env_prefix="", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=REPO_ROOT / ".env",
+        env_file_encoding="utf-8",
+        env_prefix="",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     service_name: str = "render-sim"
     port: int = 8004
@@ -19,15 +30,36 @@ class Settings(BaseSettings):
     simulation_tick_interval_sec: float = 2.0
     firestore_mirror_interval_sec: float = 10.0
 
-    # OTel & Grafana Cloud export targets
-    grafana_otel_metrics_url: str = ""
-    grafana_otel_logs_url: str = ""
-    grafana_otel_traces_url: str = ""
-    grafana_instance_user: str = ""
-    grafana_service_account_token: str = ""
+    # Grafana Cloud OTLP ingest (write path).
+    # Distinct from the query credential in mcp-gateway: ingest authenticates with
+    # HTTP Basic using the numeric instance ID plus a glc_ access policy token,
+    # while queries use a glsa_ service account token as a Bearer credential.
+    grafana_otlp_endpoint_url: str = ""
+    grafana_otlp_instance_id: str = ""
+    grafana_access_policy_token: str = ""
+
+    # How often buffered world state is pushed upstream, independent of tick rate.
+    otel_export_interval_sec: float = 15.0
 
     # Firestore configuration
     firestore_database: str = "(default)"
+
+    @property
+    def otlp_metrics_endpoint(self) -> str:
+        """Full OTLP/HTTP metrics URL, tolerating a base endpoint with or without the suffix."""
+        base = self.grafana_otlp_endpoint_url.rstrip("/")
+        if not base:
+            return ""
+        return base if base.endswith("/v1/metrics") else f"{base}/v1/metrics"
+
+    @property
+    def otlp_export_enabled(self) -> bool:
+        """True when all three ingest credentials are present."""
+        return bool(
+            self.grafana_otlp_endpoint_url
+            and self.grafana_otlp_instance_id
+            and self.grafana_access_policy_token
+        )
 
 
 settings = Settings()

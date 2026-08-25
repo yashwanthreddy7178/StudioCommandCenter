@@ -5,8 +5,8 @@ from typing import Any, Dict
 from fastapi import FastAPI, Header, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from services.stream-service.src.config import settings
-from services.stream-service.src.sse import event_generator
+from src.config import settings
+from src.sse import event_generator
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("stream-service")

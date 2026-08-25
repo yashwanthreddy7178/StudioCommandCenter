@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from services.api-gateway.src.main import app
-from services.api-gateway.src.lease import lease_manager
+from src.main import app
+from src.lease import lease_manager
 
 
 @pytest.mark.asyncio
@@ -43,7 +43,7 @@ async def test_tenant_leasing_lifecycle():
 @pytest.mark.asyncio
 async def test_run_creation_and_dispatch(monkeypatch):
     """Verify run submission endpoint returns in under 200ms."""
-    from services.api-gateway.src.main import http_client
+    from src.main import http_client
 
     async def mock_worker_post(*args, **kwargs):
         class MockRes:

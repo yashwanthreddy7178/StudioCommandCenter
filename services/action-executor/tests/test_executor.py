@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from services.action-executor.src.main import app
-from services.action-executor.src.audit import audit_store
-from services.action-executor.src.executor import action_engine
-from services.action-executor.src.verifier import verifier
+from src.main import app
+from src.audit import audit_store
+from src.executor import action_engine
+from src.verifier import verifier
 from services.common.models import ActionType
 
 

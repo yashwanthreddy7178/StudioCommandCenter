@@ -6,7 +6,7 @@ import json
 import time
 from typing import AsyncGenerator
 import httpx
-from services.stream-service.src.config import settings
+from src.config import settings
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("stream-service-sse")

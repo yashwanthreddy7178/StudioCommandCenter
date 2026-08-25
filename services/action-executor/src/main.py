@@ -5,10 +5,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from services.action-executor.src.config import settings
-from services.action-executor.src.executor import action_engine
-from services.action-executor.src.verifier import verifier
-from services.action-executor.src.audit import audit_store
+from src.config import settings
+from src.executor import action_engine
+from src.verifier import verifier
+from src.audit import audit_store
 from services.common.models import ActionType, AuditRecord
 from services.common.telemetry import setup_logging
 
