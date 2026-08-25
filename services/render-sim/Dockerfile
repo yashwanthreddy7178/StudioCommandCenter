@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY services/common /app/services/common
+COPY services/render-sim /app/services/render-sim
+
+RUN pip install --no-cache-dir /app/services/render-sim
+
+WORKDIR /app/services/render-sim
+EXPOSE 8004
+
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8004"]

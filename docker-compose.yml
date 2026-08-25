@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  render-sim:
+    build:
+      context: .
+      dockerfile: services/render-sim/Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - PORT=8004
+      - NUM_TENANT_WORLDS=24
+
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: services/mcp-gateway/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+      - RENDER_SIM_URL=http://render-sim:8004
+    depends_on:
+      - render-sim
+
+  impact-engine:
+    build:
+      context: .
+      dockerfile: services/impact-engine/Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - PORT=8002
+
+  action-executor:
+    build:
+      context: .
+      dockerfile: services/action-executor/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - PORT=8003
+      - RENDER_SIM_URL=http://render-sim:8004
+      - MCP_GATEWAY_URL=http://mcp-gateway:8001
+      - IMPACT_ENGINE_URL=http://impact-engine:8002
+    depends_on:
+      - render-sim
+      - mcp-gateway
+      - impact-engine
+
+  agent-worker:
+    build:
+      context: .
+      dockerfile: services/agent-worker/Dockerfile
+    ports:
+      - "8010:8010"
+    environment:
+      - PORT=8010
+      - MCP_GATEWAY_URL=http://mcp-gateway:8001
+      - IMPACT_ENGINE_URL=http://impact-engine:8002
+      - ACTION_EXECUTOR_URL=http://action-executor:8003
+    depends_on:
+      - mcp-gateway
+      - impact-engine
+      - action-executor
+
+  stream-service:
+    build:
+      context: .
+      dockerfile: services/stream-service/Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      - PORT=8005
+      - AGENT_WORKER_URL=http://agent-worker:8010
+    depends_on:
+      - agent-worker
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - AGENT_WORKER_URL=http://agent-worker:8010
+      - ACTION_EXECUTOR_URL=http://action-executor:8003
+      - RENDER_SIM_URL=http://render-sim:8004
+      - MCP_GATEWAY_URL=http://mcp-gateway:8001
+      - IMPACT_ENGINE_URL=http://impact-engine:8002
+    depends_on:
+      - agent-worker
+      - action-executor
+      - render-sim
