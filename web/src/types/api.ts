@@ -41,20 +41,33 @@ export interface TenantLease {
   status: 'LEASED' | 'OBSERVER' | 'AVAILABLE';
 }
 
+/**
+ * Mirrors RenderWorkerNode in services/render-sim/src/models.py.
+ *
+ * This previously declared `duration_avg_sec` and a per-worker `queue_depth`,
+ * neither of which the API returns: the field is `current_frame_duration_sec`
+ * and queue depth is fleet-level. Reading the absent field yielded undefined and
+ * `.toFixed()` on it took down the whole render tree. Keep this in step with the
+ * Python model.
+ */
 export interface WorkerStatus {
   worker_id: string;
   tenant_id: string;
-  renderer_version: string;
   gpu_type: string;
+  renderer_version: string;
+  tile_size: number;
   gpu_utilization_pct: number;
   gpu_memory_used_mb: number;
   temperature_celsius: number;
   cpu_utilization_pct: number;
   memory_used_mb: number;
   active_jobs: number;
-  queue_depth: number;
-  duration_avg_sec: number;
-  is_degraded?: boolean;
+  completed_frames: number;
+  failed_frames: number;
+  current_frame_duration_sec: number;
+  is_degraded: boolean;
+  degraded_reason: string | null;
+  is_drained: boolean;
 }
 
 export interface WorldState {
@@ -83,6 +96,13 @@ export interface FalsifiableTestResult {
   evidence_source: string;
   evidence_snippet: string;
   explanation: string;
+  /**
+   * False when the connected Grafana MCP server exposes no tool capable of
+   * gathering this evidence. Such a test is excluded from the score rather than
+   * counted as a failure, and must not be rendered as one. Optional so a payload
+   * predating the field still parses, defaulting to applicable.
+   */
+  applicable?: boolean;
 }
 
 export interface HypothesisScorecard {
@@ -90,8 +110,14 @@ export interface HypothesisScorecard {
   suspected_cause: string;
   tests: FalsifiableTestResult[];
   passed_count: number;
+  /** Count of applicable tests, not of criteria defined. */
   total_tests: number;
+  /** Names of the criteria that were skipped as inapplicable. */
+  skipped_tests?: string[];
   confidence: ConfidenceLevel;
+  /** Whether the hypothesis was corroborated, refuted, or left undecided. */
+  verdict?: 'SUPPORTED' | 'REJECTED' | 'INCONCLUSIVE';
+  headline?: string;
   missing_evidence_summary?: string;
 }
 

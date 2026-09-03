@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     )
 
     service_name: str = "render-sim"
+    # Stable across restarts so telemetry lands on the same Prometheus series.
+    # Override per instance when running more than one simulator.
+    service_instance_id: str = "render-sim-0"
     port: int = 8004
     host: str = "0.0.0.0"
     log_level: str = "INFO"
@@ -41,6 +44,12 @@ class Settings(BaseSettings):
     # How often buffered world state is pushed upstream, independent of tick rate.
     otel_export_interval_sec: float = 15.0
 
+    # Render traces are what the agent's trace-attribution test reads: each frame
+    # span breaks out asset fetch, GPU render and output write, so a slow frame
+    # can be attributed to the GPU rather than to storage or the control API.
+    # Disable to cut span volume when running all 24 worlds on a small stack.
+    emit_render_traces: bool = True
+
     # Firestore configuration
     firestore_database: str = "(default)"
 
@@ -61,6 +70,13 @@ class Settings(BaseSettings):
         if base.endswith("/v1/metrics"):
             base = base[: -len("/v1/metrics")]
         return base if base.endswith("/v1/logs") else f"{base}/v1/logs"
+
+    @property
+    def otlp_traces_endpoint(self) -> str:
+        """Full OTLP/HTTP traces URL, derived from the same base endpoint."""
+        from services.common.tracing import derive_otlp_endpoint
+
+        return derive_otlp_endpoint(self.grafana_otlp_endpoint_url, "traces")
 
     @property
     def otlp_export_enabled(self) -> bool:

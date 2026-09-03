@@ -1,191 +1,312 @@
-"""Grafana MCP Upstream Client with live MCP connection and local simulator fallback."""
+"""Grafana MCP upstream client.
+
+Speaks MCP over streamable HTTP: a JSON-RPC `initialize` handshake establishes a
+session, `notifications/initialized` completes it, and subsequent `tools/call`
+requests carry the returned session id. Responses arrive either as JSON or as a
+single server-sent event, so both shapes are parsed.
+
+There is deliberately no local fallback. If Grafana is unreachable the call
+raises and the run is reported as degraded, because a synthesised response that
+the agent cannot distinguish from real telemetry would make every downstream
+finding untrustworthy.
+"""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import asyncio
+import json
+from typing import Any, Dict, Optional
+
 import httpx
+
 from src.config import settings
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("mcp-gateway-client")
 
+PROTOCOL_VERSION = "2025-06-18"
+CLIENT_INFO = {"name": "studio-production-commander", "version": "0.1.0"}
+
+# A Grafana Cloud stack exposes several datasources of the same type: three Loki
+# instances (logs, alert-state-history, usage-insights) and two Prometheus
+# instances (stack metrics and billing usage). Picking the first match returns the
+# wrong store, so the canonical telemetry datasource is named explicitly and the
+# first-of-type search is only a fallback.
+PREFERRED_DATASOURCE_UIDS: Dict[str, str] = {
+    "prometheus": "grafanacloud-prom",
+    "loki": "grafanacloud-logs",
+    "tempo": "grafanacloud-traces",
+}
+
+
+class MCPUnavailableError(RuntimeError):
+    """Raised when the Grafana MCP server cannot be reached or is not configured."""
+
+
+class MCPToolError(RuntimeError):
+    """Raised when the upstream server rejects or fails a tool call."""
+
+
+def _enable_system_trust_store() -> None:
+    """Verify TLS against the OS certificate store when truststore is installed.
+
+    Networks with a TLS-inspecting proxy present a certificate signed by a local
+    root that is absent from the certifi bundle. No-op inside a container.
+    """
+    try:
+        import truststore
+    except ImportError:
+        return
+    truststore.inject_into_ssl()
+
 
 class GrafanaMCPClient:
-    """Executes verified Grafana MCP queries against Grafana Cloud or local simulator."""
+    """Executes allowlisted Grafana MCP tool calls against Grafana Cloud."""
 
     def __init__(self) -> None:
-        self._http_client = httpx.AsyncClient(timeout=10.0)
+        _enable_system_trust_store()
+        self._http_client = httpx.AsyncClient(timeout=20.0, follow_redirects=True)
+        self._session_id: Optional[str] = None
+        self._session_lock = asyncio.Lock()
+        self._request_id = 0
+        self._datasource_uids: Dict[str, str] = {}
+        self._datasource_lock = asyncio.Lock()
 
-    async def call_upstream_mcp(self, tool_name: str, parameters: Dict[str, Any], tenant_id: str) -> Any:
-        """Invokes the tool on the upstream Grafana MCP server or local simulator fallback."""
-        # 1. If live Grafana MCP endpoint is configured, make real MCP call
-        if settings.grafana_mcp_server_url and settings.grafana_service_account_token:
-            return await self._call_live_grafana_mcp(tool_name, parameters)
+    @property
+    def configured(self) -> bool:
+        return bool(settings.grafana_mcp_server_url and settings.grafana_service_account_token)
 
-        # 2. Fallback to querying render-sim telemetry for offline / local testing
-        return await self._call_local_render_sim_mcp(tool_name, parameters, tenant_id)
+    @property
+    def _endpoint(self) -> str:
+        return settings.grafana_mcp_server_url.rstrip("/")
 
-    async def _call_live_grafana_mcp(self, tool_name: str, parameters: Dict[str, Any]) -> Any:
-        """Executes a JSON-RPC / MCP call to the live Grafana MCP server."""
+    def _next_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
+
+    def _headers(self) -> Dict[str, str]:
         headers = {
             "Authorization": f"Bearer {settings.grafana_service_account_token}",
             "Content-Type": "application/json",
+            # Streamable HTTP servers may answer with either representation.
+            "Accept": "application/json, text/event-stream",
         }
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+        return headers
+
+    @staticmethod
+    def _parse_body(response: httpx.Response, request_id: Optional[int] = None) -> Any:
+        """Decodes a JSON body, or the relevant frame of an SSE response.
+
+        A streamable-HTTP server interleaves notifications with the reply, so the
+        first `data:` frame is frequently something like tools/list_changed rather
+        than the answer. Frames are matched on the JSON-RPC id where possible.
+        """
+        content_type = response.headers.get("content-type", "")
+        if "text/event-stream" not in content_type:
+            return response.json()
+
+        frames = []
+        for line in response.text.splitlines():
+            if not line.startswith("data:"):
+                continue
+            try:
+                frames.append(json.loads(line[5:].strip()))
+            except json.JSONDecodeError:
+                continue
+
+        if request_id is not None:
+            for frame in frames:
+                if isinstance(frame, dict) and frame.get("id") == request_id:
+                    return frame
+        for frame in frames:
+            if isinstance(frame, dict) and ("result" in frame or "error" in frame):
+                return frame
+        raise MCPToolError("SSE response contained no JSON-RPC reply")
+
+    async def _post(self, payload: Dict[str, Any]) -> httpx.Response:
+        try:
+            return await self._http_client.post(
+                self._endpoint, headers=self._headers(), json=payload
+            )
+        except httpx.HTTPError as exc:
+            raise MCPUnavailableError(
+                f"Grafana MCP transport error: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    async def _establish_session(self) -> None:
+        """Performs the initialize handshake and records the session id."""
+        self._session_id = None
+        init_id = self._next_id()
+        response = await self._post({
+            "jsonrpc": "2.0",
+            "id": init_id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": CLIENT_INFO,
+            },
+        })
+        if response.status_code != 200:
+            raise MCPUnavailableError(
+                f"Grafana MCP initialize failed: HTTP {response.status_code} "
+                f"{response.text[:200]}"
+            )
+
+        body = self._parse_body(response, init_id)
+        if isinstance(body, dict) and "error" in body:
+            raise MCPUnavailableError(f"Grafana MCP initialize error: {body['error']}")
+
+        self._session_id = response.headers.get("mcp-session-id")
+
+        # Completes the handshake; servers may reject tool calls before this.
+        await self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+        logger.info(
+            "Grafana MCP session established",
+            extra={"endpoint": self._endpoint, "session": bool(self._session_id)},
+        )
+
+    async def _ensure_session(self) -> None:
+        if self._session_id is not None:
+            return
+        async with self._session_lock:
+            if self._session_id is None:
+                await self._establish_session()
+
+    async def list_tools(self) -> list:
+        """Returns the tool descriptors the upstream server exposes."""
+        if not self.configured:
+            raise MCPUnavailableError("Grafana MCP is not configured")
+        await self._ensure_session()
+        list_id = self._next_id()
+        response = await self._post({
+            "jsonrpc": "2.0",
+            "id": list_id,
+            "method": "tools/list",
+            "params": {},
+        })
+        body = self._parse_body(response, list_id)
+        if isinstance(body, dict) and "error" in body:
+            raise MCPToolError(f"tools/list failed: {body['error']}")
+        return body.get("result", {}).get("tools", [])
+
+    async def resolve_datasource_uid(self, ds_type: str) -> Optional[str]:
+        """Returns the UID of the first datasource of the given type, cached.
+
+        Every Grafana MCP query tool requires a datasourceUid. Resolving it here
+        rather than letting the model supply one keeps datasource selection off
+        the model's surface entirely, the same reasoning as tenant injection.
+        """
+        if ds_type in self._datasource_uids:
+            return self._datasource_uids[ds_type]
+
+        # Resolution sits outside the singleflight pipeline, so without this lock
+        # a cold start with many concurrent runs would stampede list_datasources.
+        async with self._datasource_lock:
+            if ds_type in self._datasource_uids:
+                return self._datasource_uids[ds_type]
+            return await self._resolve_datasource_uncached(ds_type)
+
+    async def _resolve_datasource_uncached(self, ds_type: str) -> Optional[str]:
+        configured = getattr(settings, f"grafana_{ds_type}_datasource_uid", "")
+        if configured:
+            self._datasource_uids[ds_type] = configured
+            logger.info(
+                "Using configured datasource",
+                extra={"type": ds_type, "uid": configured},
+            )
+            return configured
+
+        result = await self.call_upstream_mcp(
+            "list_datasources", {"type": ds_type}, tenant_id=""
+        )
+        entries = [e for e in (result if isinstance(result, list) else result.get("datasources", []))
+                   if isinstance(e, dict) and e.get("uid")]
+
+        preferred = PREFERRED_DATASOURCE_UIDS.get(ds_type)
+        uid = None
+        if preferred:
+            uid = next((e["uid"] for e in entries if e["uid"] == preferred), None)
+        if uid is None:
+            uid = entries[0]["uid"] if entries else None
+            if uid and preferred:
+                logger.warning(
+                    "Preferred datasource not found, falling back to first of type",
+                    extra={"type": ds_type, "preferred": preferred, "using": uid},
+                )
+
+        if uid:
+            self._datasource_uids[ds_type] = uid
+            logger.info(
+                "Resolved Grafana datasource", extra={"type": ds_type, "uid": uid}
+            )
+        else:
+            logger.warning("No datasource found", extra={"type": ds_type})
+        return uid
+
+    async def call_upstream_mcp(
+        self, tool_name: str, parameters: Dict[str, Any], tenant_id: str
+    ) -> Any:
+        """Invokes one tool on the upstream Grafana MCP server."""
+        if not self.configured:
+            raise MCPUnavailableError(
+                "Grafana MCP is not configured; set GRAFANA_MCP_SERVER_URL and "
+                "GRAFANA_SERVICE_ACCOUNT_TOKEN"
+            )
+
+        await self._ensure_session()
+        call_id = self._next_id()
         payload = {
             "jsonrpc": "2.0",
+            "id": call_id,
             "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": parameters,
-            },
-            "id": 1,
+            "params": {"name": tool_name, "arguments": parameters},
         }
-        response = await self._http_client.post(
-            f"{settings.grafana_mcp_server_url}/rpc",
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
-        if "error" in data:
-            raise RuntimeError(f"Grafana MCP upstream error: {data['error']}")
-        return data.get("result", {})
+        response = await self._post(payload)
 
-    async def _call_local_render_sim_mcp(self, tool_name: str, parameters: Dict[str, Any], tenant_id: str) -> Any:
-        """Emulates Grafana MCP tool responses using render-sim telemetry."""
-        # Query render-sim telemetry endpoint; gracefully degrade when not running (e.g. tests)
-        world_data: Dict[str, Any] = {}
-        try:
-            res = await self._http_client.get(
-                f"{settings.render_sim_url}/worlds/{tenant_id}", timeout=2.0
+        # An expired session is reported as 404; re-handshake once before failing.
+        if response.status_code == 404 and self._session_id:
+            logger.info("Grafana MCP session expired, re-establishing")
+            self._session_id = None
+            await self._ensure_session()
+            response = await self._post(payload)
+
+        if response.status_code != 200:
+            raise MCPUnavailableError(
+                f"Grafana MCP HTTP {response.status_code}: {response.text[:200]}"
             )
-            if res.status_code == 200:
-                world_data = res.json()
-        except Exception:
-            # render-sim not available (unit test environment) — use static stubs
-            world_data = {}
 
-        workers = world_data.get("workers", [])
+        body = self._parse_body(response, call_id)
+        if isinstance(body, dict) and "error" in body:
+            raise MCPToolError(f"{tool_name} failed: {body['error']}")
 
-        if tool_name == "list_prometheus_metric_names":
-            return {
-                "metrics": [
-                    "render_worker_frame_duration_seconds",
-                    "render_worker_gpu_utilization_ratio",
-                    "render_worker_gpu_memory_used_bytes",
-                    "render_worker_temperature_celsius",
-                    "render_worker_cpu_utilization_ratio",
-                    "render_worker_memory_used_bytes",
-                    "render_queue_depth_frames",
-                    "render_throughput_frames_per_minute",
-                ]
-            }
+        return self._extract_result(tool_name, body.get("result", {}))
 
-        elif tool_name == "list_prometheus_label_values":
-            label = parameters.get("label_name", "worker_id")
-            if label == "worker_id":
-                return {"values": [w.get("worker_id") for w in workers]}
-            elif label == "renderer_version":
-                return {"values": ["v2.4.0", "v2.4.1"]}
-            return {"values": ["t01", "t02", "t07", "t24"]}
+    @staticmethod
+    def _extract_result(tool_name: str, result: Dict[str, Any]) -> Any:
+        """Unwraps an MCP tool result into plain data.
 
-        elif tool_name in {"query_prometheus", "query_prometheus_histogram"}:
-            query = parameters.get("query", "")
-            # Return realistic Prometheus vector/matrix format
-            result_series = []
-            for w in workers:
-                wid = w.get("worker_id")
-                gpu_util = w.get("gpu_utilization_pct", 94.0) / 100.0
-                duration = w.get("current_frame_duration_sec", 22.0)
-                version = w.get("renderer_version", "v2.4.0")
+        Prefers `structuredContent`, then a text block parsed as JSON, then the
+        raw text, so callers get usable data whichever shape the server returns.
+        """
+        if result.get("isError"):
+            raise MCPToolError(f"{tool_name} returned an error result: {result}")
 
-                if "duration" in query:
-                    val = duration
-                elif "gpu_utilization" in query:
-                    val = gpu_util
-                elif "throughput" in query:
-                    val = world_data.get("observed_throughput_fpm", 118.6)
-                elif "queue" in query:
-                    val = world_data.get("queue_depth", 18432)
-                else:
-                    val = 1.0
+        if "structuredContent" in result:
+            return result["structuredContent"]
 
-                result_series.append({
-                    "metric": {
-                        "__name__": "render_metric",
-                        "tenant_id": tenant_id,
-                        "worker_id": wid,
-                        "renderer_version": version,
-                        "gpu_type": w.get("gpu_type", "NVIDIA RTX 4090"),
-                    },
-                    "value": [1725465600, str(val)],
-                })
+        blocks = result.get("content", [])
+        texts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
+        if not texts:
+            return result
 
-            return {
-                "resultType": "vector",
-                "result": result_series,
-            }
-
-        elif tool_name in {"query_loki_logs", "query_loki_stats"}:
-            # Return realistic Loki streams
-            entries = []
-            for w in workers:
-                wid = w.get("worker_id")
-                is_degraded = w.get("is_degraded", False)
-                ver = w.get("renderer_version", "v2.4.0")
-                if is_degraded:
-                    line = f"[WARN] Worker {wid} [v{ver}] tile_size=2048 VRAM paging stall, duration={w.get('current_frame_duration_sec', 145.0):.1f}s"
-                else:
-                    line = f"[INFO] Worker {wid} [v{ver}] completed frame in {w.get('current_frame_duration_sec', 22.0):.1f}s"
-                entries.append([str(int(1725465600 * 1e9)), line])
-
-            return {
-                "resultType": "streams",
-                "result": [
-                    {
-                        "stream": {"tenant_id": tenant_id, "job": "render"},
-                        "values": entries,
-                    }
-                ],
-            }
-
-        elif tool_name == "search_tempo_traces":
-            return {
-                "traces": [
-                    {
-                        "traceID": "4bf92f3577b34da6a3ce929d0e0e4736",
-                        "rootServiceName": "render-pipeline",
-                        "rootTraceName": "render_frame_cycles",
-                        "durationMs": 145000 if world_data.get("is_incident_active") else 22000,
-                        "spanCount": 14,
-                    }
-                ]
-            }
-
-        elif tool_name in {"list_alert_rules", "get_alert_rule_by_uid"}:
-            return {
-                "rules": [
-                    {
-                        "uid": "alert-vfx-render-delay",
-                        "title": "Render Fleet Throughput Degradation",
-                        "state": "firing" if world_data.get("is_incident_active") else "normal",
-                        "labels": {"tenant_id": tenant_id, "severity": "critical"},
-                    }
-                ]
-            }
-
-        elif tool_name == "list_incidents":
-            return {
-                "incidents": [
-                    {
-                        "id": "inc-0842",
-                        "title": "Render throughput dropped 65% on v2.4.1 workers",
-                        "status": "active" if world_data.get("is_incident_active") else "resolved",
-                        "created_at": "2026-09-04T14:50:00Z",
-                    }
-                ]
-            }
-
-        return {"data": "ok"}
+        joined = "\n".join(texts)
+        try:
+            return json.loads(joined)
+        except json.JSONDecodeError:
+            return joined
 
     async def close(self) -> None:
         await self._http_client.aclose()

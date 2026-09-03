@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Zap, Cpu, Server } from 'lucide-react';
+import { Activity } from 'lucide-react';
 
 export const AgentMetrics: React.FC = () => {
   const [stats, setStats] = useState({
@@ -7,8 +7,7 @@ export const AgentMetrics: React.FC = () => {
     total_calls: 38,
     cache_hits: 35,
     qps: 3.2,
-    singleflights: 0,
-  });
+    singleflights: 0 });
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -20,8 +19,7 @@ export const AgentMetrics: React.FC = () => {
             ...prev,
             cache_hit_ratio_pct: data.cache_hit_ratio_pct || 91.4,
             total_calls: data.total_calls || 38,
-            cache_hits: data.cache_hits || 35,
-          }));
+            cache_hits: data.cache_hits || 35 }));
         }
       } catch (err) {
         // use fallback demo stats

@@ -71,7 +71,12 @@ class IncidentTriggerRequest(BaseModel):
     """Payload to inject an incident scenario into a specific tenant world."""
     tenant_id: str
     scenario_type: str = "renderer_tile_regression"
-    affected_worker_ids: List[str] = Field(default_factory=lambda: ["w-03", "w-07", "w-11", "w-17"])
+    # Four of the eight workers that exist. w-11 and w-17 were named here but are
+    # not present in an eight-worker world, so half the incident silently did
+    # nothing. Kept in step with the engine default.
+    affected_worker_ids: List[str] = Field(
+        default_factory=lambda: ["w-01", "w-03", "w-04", "w-06"]
+    )
     new_renderer_version: str = "v2.4.1"
     new_tile_size: int = 2048
 

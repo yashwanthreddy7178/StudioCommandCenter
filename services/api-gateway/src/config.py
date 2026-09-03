@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Downstream Microservices
     agent_worker_url: str = "http://localhost:8010"
     action_executor_url: str = "http://localhost:8003"
+    # How far ahead a scenario reset places the delivery deadline. Sized so a
+    # healthy fleet meets it and a degraded one does not.
+    delivery_window_minutes: int = 185
     render_sim_url: str = "http://localhost:8004"
     mcp_gateway_url: str = "http://localhost:8001"
     impact_engine_url: str = "http://localhost:8002"

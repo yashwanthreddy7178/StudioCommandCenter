@@ -14,6 +14,21 @@ from src.schema import (
 )
 
 
+def _shot_status(index: int, total: int, complete_through: float) -> str:
+    """Assigns a shot lifecycle state by position within its sequence.
+
+    A production in flight has finished, in-progress and queued shots. The
+    proportions differ per sequence so the board shows real variation, and the UI
+    counts these rather than being told a percentage.
+    """
+    completed_count = int(total * complete_through)
+    if index <= completed_count:
+        return "COMPLETE"
+    if index <= completed_count + 40:
+        return "RENDERING"
+    return "QUEUED"
+
+
 async def seed_production_database(session: AsyncSession) -> None:
     """Populates production metadata if tables are empty."""
     # Check if production already exists
@@ -68,7 +83,7 @@ async def seed_production_database(session: AsyncSession) -> None:
             frame_start=1001,
             frame_end=1120,
             priority=1,
-            status="QUEUED" if i > 50 else "RENDERING",
+            status=_shot_status(i, 1200, complete_through=0.62),
         )
         shot.deliverables.append(deliv1)
         created_shots.append(shot)
@@ -82,7 +97,7 @@ async def seed_production_database(session: AsyncSession) -> None:
             frame_start=1001,
             frame_end=1096,
             priority=1,
-            status="QUEUED" if i > 30 else "RENDERING",
+            status=_shot_status(i, 642, complete_through=0.71),
         )
         shot.deliverables.append(deliv1)
         created_shots.append(shot)
@@ -96,26 +111,46 @@ async def seed_production_database(session: AsyncSession) -> None:
             frame_start=1001,
             frame_end=1080,
             priority=0,
-            status="QUEUED",
+            status=_shot_status(i, 800, complete_through=0.12),
         )
         created_shots.append(shot)
 
     session.add_all(created_shots)
 
-    # 6. Render Jobs assigned to workers
-    workers = ["w-01", "w-02", "w-03", "w-04", "w-05", "w-06", "w-07", "w-08"]
+    # 6. Render jobs. Each worker takes frames from several shots spread across
+    # all three sequences, which is how a render farm actually schedules work.
+    # Assigning every worker a shot from the same sequence would make the
+    # worker-to-deliverable join incapable of distinguishing anything.
+    by_scene = {
+        "sc-04-chase": [s for s in created_shots if s.scene_id == "sc-04-chase"],
+        "sc-02-rooftop": [s for s in created_shots if s.scene_id == "sc-02-rooftop"],
+        "sc-01-lab": [s for s in created_shots if s.scene_id == "sc-01-lab"],
+    }
+
+    # Workers are pooled per sequence, the way a farm actually schedules. If every
+    # worker drew from every sequence, any set of failing workers would implicate
+    # all of them and the worker-to-deliverable join could not localise anything.
+    worker_pools = {
+        "w-01": "sc-04-chase", "w-02": "sc-04-chase", "w-03": "sc-04-chase",
+        "w-04": "sc-02-rooftop", "w-05": "sc-02-rooftop", "w-06": "sc-02-rooftop",
+        "w-07": "sc-01-lab", "w-08": "sc-01-lab",
+    }
+
     jobs = []
-    for idx, worker_id in enumerate(workers):
-        assigned_shot = created_shots[idx * 5]
-        job = RenderJob(
-            job_id=f"job-{worker_id}-001",
-            shot_id=assigned_shot.shot_id,
-            worker_id=worker_id,
-            frame=1042,
-            state="RUNNING",
-            started_at=now - timedelta(minutes=10),
-        )
-        jobs.append(job)
+    for idx, (worker_id, scene_id) in enumerate(worker_pools.items()):
+        scene_shots = by_scene[scene_id]
+        for job_no in range(4):
+            shot = scene_shots[(idx * 7 + job_no * 3) % len(scene_shots)]
+            jobs.append(
+                RenderJob(
+                    job_id=f"job-{worker_id}-{job_no:02d}",
+                    shot_id=shot.shot_id,
+                    worker_id=worker_id,
+                    frame=1042 + job_no,
+                    state="RUNNING",
+                    started_at=now - timedelta(minutes=10 + job_no),
+                )
+            )
 
     session.add_all(jobs)
     await session.commit()

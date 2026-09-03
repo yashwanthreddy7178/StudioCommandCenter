@@ -1,5 +1,5 @@
 import React from 'react';
-import { Film, Shield, Zap, RotateCcw, AlertTriangle, Play } from 'lucide-react';
+import { Film, Shield, RotateCcw, AlertTriangle, Play } from 'lucide-react';
 import { TenantLease, WorldState, RunState } from '../types/api';
 
 interface HeaderProps {
@@ -15,12 +15,10 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   lease,
   world,
-  runState,
   onTriggerIncident,
   onResetWorld,
   onStartInvestigation,
-  isInvestigating,
-}) => {
+  isInvestigating }) => {
   const isIncident = world?.is_incident_active ?? false;
 
   return (

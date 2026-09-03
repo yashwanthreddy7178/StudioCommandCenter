@@ -23,7 +23,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # Wildcard origin with credentials is rejected outright by browsers, and
+    # nothing needs it: auth is a JWT bearer token set on the request, not a
+    # cookie the browser attaches on its own.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -51,7 +54,9 @@ class CreateRunRequest(BaseModel):
 class TriggerIncidentProxyRequest(BaseModel):
     tenant_id: str
     scenario_type: str = "renderer_tile_regression"
-    affected_worker_ids: List[str] = Field(default_factory=lambda: ["w-03", "w-07"])
+    # Left unset so render-sim's own default applies. Duplicating the worker
+    # list here silently overrode it and degraded only two workers.
+    affected_worker_ids: Optional[List[str]] = None
     new_renderer_version: str = "v2.4.1"
     new_tile_size: int = 2048
 
@@ -119,7 +124,13 @@ async def create_run(req: CreateRunRequest) -> Dict[str, Any]:
         res = await http_client.post(f"{settings.agent_worker_url}/runs/investigate", json=worker_payload)
         res.raise_for_status()
     except Exception as exc:
-        logger.warning("Worker dispatch failed, starting local investigation", extra={"error": str(exc)})
+        # Returning QUEUED here would leave the client waiting on an event stream
+        # that no worker is ever going to write to.
+        logger.error("Worker dispatch failed", extra={"run_id": run_id, "error": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"agent-worker is unavailable, run not started: {str(exc)[:200]}",
+        )
 
     return {
         "status": "QUEUED",
@@ -152,7 +163,11 @@ async def approve_run_action(run_id: str, req: ApprovalRequest) -> Dict[str, Any
         if not chosen_opt:
             raise HTTPException(status_code=400, detail=f"Option '{req.option_id}' not found in run")
 
-        # Forward to action-executor
+        # Forward to action-executor, carrying the option's own description and
+        # the deliverables the impact engine flagged. The executor writes both
+        # back to Grafana after the action lands, so the annotation an SRE reads
+        # names the production consequence rather than just the action type.
+        impact = run_data.get("impact") or {}
         executor_payload = {
             "run_id": run_id,
             "option_id": req.option_id,
@@ -160,20 +175,34 @@ async def approve_run_action(run_id: str, req: ApprovalRequest) -> Dict[str, Any
             "user_id": req.user_id,
             "action_type": chosen_opt.get("action_type"),
             "parameters": chosen_opt.get("parameters", {}),
+            "option_title": chosen_opt.get("title", ""),
+            "production_consequence": chosen_opt.get("production_consequence", ""),
+            "at_risk_deliverables": impact.get("at_risk_deliverables", []),
         }
         exec_res = await http_client.post(f"{settings.action_executor_url}/actions/execute", json=executor_payload)
         exec_data = exec_res.json()
 
-        # Trigger verification
-        verify_res = await http_client.post(
-            f"{settings.action_executor_url}/actions/verify",
-            json={"tenant_id": req.tenant_id, "run_id": run_id}
-        )
+        # Hand verification to agent-worker, which owns the run and knows the
+        # pre-action projection to measure recovery against. It settles for 90
+        # seconds, so this returns immediately and the outcome reaches the client
+        # on the event stream rather than holding the approval request open.
+        verify_started = False
+        try:
+            verify_res = await http_client.post(
+                f"{settings.agent_worker_url}/runs/{run_id}/verify"
+            )
+            verify_started = verify_res.status_code == 200
+        except Exception as exc:
+            logger.warning(
+                "Could not start verification",
+                extra={"run_id": run_id, "error": str(exc)},
+            )
 
         return {
             "status": "APPROVED_AND_EXECUTED",
             "execution": exec_data,
-            "verification": verify_res.json() if verify_res.status_code == 200 else {},
+            "verification_started": verify_started,
+            "run_state": "VERIFYING" if verify_started else "DEGRADED",
         }
     except HTTPException:
         raise
@@ -189,9 +218,11 @@ async def approve_run_action(run_id: str, req: ApprovalRequest) -> Dict[str, Any
 async def proxy_trigger_incident(req: TriggerIncidentProxyRequest) -> Dict[str, Any]:
     """Proxies incident injection to render-sim."""
     try:
+        # Unset fields are dropped so render-sim applies its own defaults rather
+        # than receiving an explicit null that overrides them.
         res = await http_client.post(
             f"{settings.render_sim_url}/scenario/trigger-incident",
-            json=req.model_dump()
+            json=req.model_dump(exclude_none=True),
         )
         res.raise_for_status()
         return res.json()
@@ -201,10 +232,30 @@ async def proxy_trigger_incident(req: TriggerIncidentProxyRequest) -> Dict[str, 
 
 @app.post("/scenario/reset/{tenant_id}", response_model=Dict[str, Any])
 async def proxy_reset_world(tenant_id: str) -> Dict[str, Any]:
-    """Proxies world reset to render-sim."""
+    """Resets the tenant world and restores a usable delivery window.
+
+    Deliverable deadlines are anchored once when impact-engine seeds, so a stack
+    left running drifts past them and every projection is then measured against a
+    deadline in the past. Re-anchoring here makes the reset a single operation
+    rather than a manual step that has to be remembered.
+    """
     try:
         res = await http_client.post(f"{settings.render_sim_url}/scenario/reset/{tenant_id}")
         res.raise_for_status()
-        return res.json()
+        world = res.json()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to reset world: {str(exc)}")
+
+    deadline_utc = None
+    try:
+        anchor = await http_client.post(
+            f"{settings.impact_engine_url}/production/reanchor-deadline",
+            json={"minutes_from_now": settings.delivery_window_minutes},
+        )
+        if anchor.status_code == 200:
+            deadline_utc = anchor.json().get("deadline_utc")
+    except Exception as exc:
+        # The world is reset either way; the caller is told the deadline was not.
+        logger.warning("Could not re-anchor deadline", extra={"error": str(exc)})
+
+    return {**world, "deadline_utc": deadline_utc}

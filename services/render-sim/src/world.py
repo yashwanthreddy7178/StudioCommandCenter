@@ -6,6 +6,16 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from src.models import GPU_PROFILES, RenderWorkerNode
 
+# Frames outstanding at the start of a scenario.
+#
+# Sized against what the fleet can actually deliver: eight workers sustain about
+# 18.5 frames per minute, so this drains in roughly two and a half hours and a
+# same-day deadline is met while healthy and missed once workers degrade. The
+# previous value of 18,432 was chosen against a throughput figure of 118.6 fpm
+# that the simulator never produced, which left the deadline unreachable even
+# with a perfectly healthy farm and no incident.
+BASELINE_QUEUE_DEPTH = 2800
+
 
 class TenantProductionWorld:
     """Represents the complete simulated render farm state for a single tenant."""
@@ -18,7 +28,7 @@ class TenantProductionWorld:
         self.tile_size = 256
         self.is_incident_active = False
         self.incident_type: Optional[str] = None
-        self.queue_depth = 18432
+        self.queue_depth = BASELINE_QUEUE_DEPTH
         self.last_updated = datetime.utcnow()
         self.workers: Dict[str, RenderWorkerNode] = {}
 

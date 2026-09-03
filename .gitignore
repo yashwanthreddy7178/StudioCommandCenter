@@ -67,6 +67,9 @@ dist-ssr/
 .npm
 .eslintcache
 
+# Vendored third-party binaries (mcp-grafana), fetched not committed
+.tools/
+
 # IDE / Editor
 .idea/
 .vscode/

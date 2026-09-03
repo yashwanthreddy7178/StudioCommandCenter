@@ -1,74 +1,95 @@
 import React from 'react';
-import { Clock, AlertCircle, CheckCircle2, TrendingDown, Gauge, Layers } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Gauge, Clock } from 'lucide-react';
 import { ImpactProjection, WorldState } from '../types/api';
 
 interface DeliveryCountdownProps {
   impact: ImpactProjection | null;
   world: WorldState | null;
+  /** Deadline from production metadata, known before any investigation runs. */
+  productionDeadline?: string | null;
 }
 
-export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({ impact, world }) => {
-  const isIncident = world?.is_incident_active ?? false;
-  const throughput = world?.observed_throughput_fpm ?? 118.6;
-  const queueDepth = world?.queue_depth ?? 18432;
-  const delayMinutes = impact ? impact.delay_minutes : isIncident ? 47 : 0;
-  const isRecovered = impact ? impact.is_remediated : !isIncident;
+/** Formats an ISO timestamp as HH:MM:SS UTC. */
+function utcTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '--:--:--';
+  return `${d.toISOString().slice(11, 19)} UTC`;
+}
+
+/** Placeholder shown until a figure has actually been measured. */
+const Pending: React.FC<{ label?: string }> = ({ label = 'awaiting telemetry' }) => (
+  <span className="text-sm font-mono text-slate-500">{label}</span>
+);
+
+export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({
+  impact,
+  world,
+  productionDeadline = null,
+}) => {
+  // Every figure below comes from the impact projection or live world state.
+  // Nothing is substituted when a value is missing: a placeholder number here
+  // would be indistinguishable on screen from a measured one.
+  const delayMinutes = impact?.delay_minutes ?? null;
+  const isLate = (delayMinutes ?? 0) > 0;
+  const throughput = world?.observed_throughput_fpm ?? impact?.observed_throughput_fpm ?? null;
+  const baseline = world?.baseline_throughput_fpm ?? impact?.baseline_throughput_fpm ?? null;
+  const queueDepth = world?.queue_depth ?? impact?.queue_depth ?? null;
+  const atRisk = impact?.at_risk_deliverables ?? [];
+  // The deadline exists independently of a projection.
+  const deadline = impact?.deadline_utc ?? productionDeadline;
+  const degraded = baseline !== null && throughput !== null && throughput < baseline * 0.9;
 
   return (
     <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-xl relative overflow-hidden">
-      {/* Background Accent Glow */}
       <div
         className={`absolute -right-20 -top-20 w-64 h-64 rounded-full blur-3xl pointer-events-none opacity-20 ${
-          delayMinutes > 0 ? 'bg-red-500' : 'bg-emerald-500'
+          isLate ? 'bg-red-500' : 'bg-emerald-500'
         }`}
       />
 
-      <div className="flex items-center justify-between pb-4 border-b border-studio-border/60">
-        <div className="flex items-center space-x-2.5">
-          <Clock className="w-5 h-5 text-studio-cyan" />
-          <h2 className="text-sm font-semibold tracking-wide text-slate-200 uppercase font-mono">
-            VFX Delivery Deadline Protection: SP_VFX_R04
-          </h2>
-        </div>
-        <span className="text-xs font-mono text-slate-400">
-          Target Deliverable: <span className="text-white font-medium">Shadow Protocol - 4K Review Master</span>
-        </span>
+      <div className="flex items-center space-x-2 relative">
+        <Clock className="w-4 h-4 text-slate-400" />
+        <h2 className="text-sm font-semibold text-slate-200 tracking-wide">DELIVERY PROJECTION</h2>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
-        {/* Delivery Deadline */}
+        {/* Deadline, from the deliverable record in production metadata */}
         <div className="bg-studio-card/80 border border-studio-border/60 rounded-lg p-3.5 flex flex-col justify-between">
           <span className="text-xs text-slate-400 font-medium">Target Deadline</span>
-          <div className="text-xl font-bold font-mono text-white mt-1">18:00:00 UTC</div>
-          <span className="text-[11px] text-slate-500 font-mono mt-1">Today (Hard delivery lock)</span>
+          <div className="text-xl font-bold font-mono text-white mt-1">
+            {deadline ? utcTime(deadline) : <Pending label="--:--:-- UTC" />}
+          </div>
+          <span className="text-[11px] text-slate-500 font-mono mt-1">
+            {atRisk.length > 0 ? atRisk.join(', ') : 'Hard delivery lock'}
+          </span>
         </div>
 
-        {/* Projected Completion */}
+        {/* Projected completion, from queue depth over observed throughput */}
         <div className="bg-studio-card/80 border border-studio-border/60 rounded-lg p-3.5 flex flex-col justify-between">
           <span className="text-xs text-slate-400 font-medium">Projected Completion</span>
           <div
             className={`text-xl font-bold font-mono mt-1 ${
-              delayMinutes > 0 ? 'text-red-400 font-extrabold' : 'text-emerald-400'
+              isLate ? 'text-red-400 font-extrabold' : 'text-emerald-400'
             }`}
           >
-            {delayMinutes > 0 ? '18:47:00 UTC' : '17:35:00 UTC'}
+            {impact ? utcTime(impact.projected_completion_utc) : <Pending label="--:--:-- UTC" />}
           </div>
           <span className="text-[11px] text-slate-500 font-mono mt-1">
-            {delayMinutes > 0 ? 'Misses target deadline' : '25m safety margin'}
+            {impact ? (isLate ? 'Misses target deadline' : 'Inside the delivery window') : 'No projection yet'}
           </span>
         </div>
 
-        {/* Status / Delay Delta */}
+        {/* Delivery status */}
         <div
           className={`border rounded-lg p-3.5 flex flex-col justify-between ${
-            delayMinutes > 0
-              ? 'bg-red-500/10 border-red-500/30'
-              : 'bg-emerald-500/10 border-emerald-500/30'
+            isLate ? 'bg-red-500/10 border-red-500/30' : 'bg-emerald-500/10 border-emerald-500/30'
           }`}
         >
           <span className="text-xs font-medium text-slate-300">Delivery Status</span>
           <div className="flex items-center space-x-2 mt-1">
-            {delayMinutes > 0 ? (
+            {delayMinutes === null ? (
+              <Pending />
+            ) : isLate ? (
               <>
                 <AlertCircle className="w-5 h-5 text-red-400" />
                 <span className="text-lg font-bold font-mono text-red-400">+{delayMinutes}m DELAY</span>
@@ -81,37 +102,44 @@ export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({ impact, wo
             )}
           </div>
           <span className="text-[11px] font-mono text-slate-400 mt-1">
-            {delayMinutes > 0 ? '1 Deliverable at risk' : 'All deliverables protected'}
+            {impact
+              ? `${impact.affected_shots.toLocaleString()} shots (${impact.high_priority_shots.toLocaleString()} high priority)`
+              : 'Awaiting impact projection'}
           </span>
         </div>
 
-        {/* Fleet Throughput */}
+        {/* Fleet throughput */}
         <div className="bg-studio-card/80 border border-studio-border/60 rounded-lg p-3.5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400 font-medium">Fleet Throughput</span>
             <Gauge className="w-3.5 h-3.5 text-slate-400" />
           </div>
           <div className="flex items-baseline space-x-1.5 mt-1">
-            <span
-              className={`text-xl font-bold font-mono ${
-                throughput < 90 ? 'text-amber-400' : 'text-white'
-              }`}
-            >
-              {throughput.toFixed(1)}
-            </span>
-            <span className="text-xs text-slate-400 font-mono">FPM</span>
+            {throughput === null ? (
+              <Pending />
+            ) : (
+              <>
+                <span
+                  className={`text-xl font-bold font-mono ${degraded ? 'text-amber-400' : 'text-white'}`}
+                >
+                  {throughput.toFixed(1)}
+                </span>
+                <span className="text-xs text-slate-400 font-mono">FPM</span>
+              </>
+            )}
           </div>
           <span className="text-[11px] text-slate-500 font-mono mt-1">
-            Baseline: 118.6 FPM | Queue: {queueDepth.toLocaleString()} frames
+            {baseline !== null ? `Baseline: ${baseline.toFixed(1)} FPM` : 'Baseline: pending'}
+            {' | '}
+            {queueDepth !== null ? `Queue: ${queueDepth.toLocaleString()} frames` : 'Queue: pending'}
           </span>
         </div>
       </div>
 
-      {/* Impact Engine Method String */}
+      {/* The derivation is shown so the number can be checked, per section 7. */}
       {impact && (
-        <div className="mt-4 pt-3 border-t border-studio-border/40 flex items-start space-x-2 text-xs font-mono text-slate-400">
-          <span className="text-studio-accent font-semibold whitespace-nowrap">Impact Engine Derivation:</span>
-          <span className="text-slate-300 italic">{impact.method}</span>
+        <div className="mt-3 text-[11px] font-mono text-slate-500 border-t border-studio-border/50 pt-2">
+          method: {impact.method}
         </div>
       )}
     </div>

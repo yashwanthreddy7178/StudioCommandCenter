@@ -8,14 +8,27 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from src.config import settings
-from src.allowlist import ToolAllowlistError, validate_tool_allowed
+from src.allowlist import (
+    DATASOURCE_INJECTED_TOOLS,
+    ToolAllowlistError,
+    validate_tool_allowed,
+    validate_write_tool_allowed,
+)
 from src.rewriter import rewrite_tool_parameters
 from src.cache import cache
 from src.singleflight import singleflight
 from src.ratelimit import rate_limiter
-from src.mcp_client import mcp_client
+from src.mcp_client import MCPUnavailableError, mcp_client
 from services.common.models import ToolCallLog
 from services.common.telemetry import setup_logging
+
+# Applied before any client is constructed: on a network that inspects TLS the
+# default certifi bundle cannot verify the served certificate, and every
+# outbound call fails. No-op in a container.
+from services.common.tls import enable_system_trust_store
+
+enable_system_trust_store()
+
 
 logger = setup_logging("mcp-gateway")
 
@@ -37,6 +50,18 @@ class MCPCallResponse(BaseModel):
     is_stale: bool = False
     tenant_id: str
     run_id: Optional[str] = None
+
+
+class MCPWriteRequest(BaseModel):
+    """Payload for a post-approval write back into Grafana."""
+    tool_name: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    tenant_id: str
+    run_id: Optional[str] = None
+    # Required, and recorded on every write. A write with no approval behind it
+    # has no business reaching Grafana, and the audit trail has to be able to name
+    # the approval that authorised each one.
+    approval_id: str
 
 
 # In-memory structured call logs and metrics
@@ -64,7 +89,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -103,6 +128,21 @@ async def call_mcp_tool(req: MCPCallRequest) -> MCPCallResponse:
 
     # Step 2: Server-side tenant matcher injection
     rewritten_params = rewrite_tool_parameters(req.tool_name, req.parameters, req.tenant_id)
+
+    # Step 2b: Server-side datasource resolution. Every Grafana MCP query tool
+    # requires a datasourceUid; resolving it here keeps datasource selection off
+    # the model's surface, so a hallucinated or borrowed UID is not reachable.
+    ds_type = DATASOURCE_INJECTED_TOOLS.get(req.tool_name)
+    if ds_type and not rewritten_params.get("datasourceUid"):
+        try:
+            uid = await mcp_client.resolve_datasource_uid(ds_type)
+        except MCPUnavailableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Grafana MCP unavailable: {exc}",
+            )
+        if uid:
+            rewritten_params = {**rewritten_params, "datasourceUid": uid}
 
     # Step 3: Quantize parameters to 15s bucket
     quantized_params, time_bucket = cache.quantize_params(rewritten_params)
@@ -158,6 +198,25 @@ async def call_mcp_tool(req: MCPCallRequest) -> MCPCallResponse:
         res_data, was_leader = await singleflight.execute(cache_key, _fetch_upstream)
     except HTTPException:
         raise
+    except MCPUnavailableError as exc:
+        if cached_payload is not None:
+            logger.warning(
+                "Grafana MCP unavailable, serving stale cache",
+                extra={"tool": req.tool_name, "error": str(exc)},
+            )
+            res_data = cached_payload
+            is_stale = True
+        else:
+            # Nothing is synthesised to cover the gap: the caller surfaces a
+            # degraded run rather than evidence the agent would treat as real.
+            logger.error(
+                "Grafana MCP unavailable and no cached data",
+                extra={"tool": req.tool_name, "error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Grafana MCP unavailable: {exc}",
+            )
     except Exception as exc:
         if cached_payload is not None:
             # Degraded fallback on 5xx error
@@ -188,6 +247,98 @@ async def call_mcp_tool(req: MCPCallRequest) -> MCPCallResponse:
         latency_ms=latency_ms,
         cache_hit=False,
         is_stale=is_stale,
+        tenant_id=req.tenant_id,
+        run_id=req.run_id,
+    )
+
+
+@app.post("/write", response_model=MCPCallResponse)
+async def write_mcp_tool(req: MCPWriteRequest) -> MCPCallResponse:
+    """Executes an approved write back into Grafana Cloud.
+
+    Kept separate from /call rather than folded into it behind a flag. The query
+    path validates against an allowlist holding no write tool at all, so the agent
+    cannot reach this behaviour however its prompt is manipulated; arriving here
+    requires a caller that already holds an approval id.
+
+    Deliberately uncached, unquantized and not deduplicated: those transformations
+    are safe for reads and wrong for writes, which must reach Grafana exactly as
+    the executor issued them. Rate limiting still applies, since writes share the
+    upstream quota with every query.
+    """
+    global total_calls_count
+    total_calls_count += 1
+    start_time = time.time()
+
+    try:
+        validate_write_tool_allowed(req.tool_name)
+    except ToolAllowlistError as exc:
+        logger.warning(
+            "Write allowlist rejection",
+            extra={"tool": exc.tool_name, "tenant": req.tenant_id},
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+    acquired = await rate_limiter.acquire(timeout_sec=5.0)
+    if not acquired:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Upstream Grafana MCP rate limit ceiling reached; write not attempted.",
+        )
+
+    try:
+        result = await mcp_client.call_upstream_mcp(
+            req.tool_name, req.parameters, req.tenant_id
+        )
+    except MCPUnavailableError as exc:
+        # No stale-cache fallback here: pretending a write landed when it did not
+        # would put a false record in front of the humans reading the dashboard.
+        logger.error(
+            "Grafana MCP unavailable for write",
+            extra={"tool": req.tool_name, "error": str(exc)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Grafana MCP unavailable: {exc}",
+        )
+    except Exception as exc:
+        logger.error(
+            "Grafana MCP write failed",
+            extra={"tool": req.tool_name, "error": str(exc)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Grafana MCP write failed: {exc}",
+        )
+
+    latency_ms = round((time.time() - start_time) * 1000.0, 2)
+    call_logs.append(
+        ToolCallLog(
+            tool_name=req.tool_name,
+            parameters={**req.parameters, "approval_id": req.approval_id},
+            latency_ms=latency_ms,
+            cache_hit=False,
+            is_stale=False,
+            tenant_id=req.tenant_id,
+            run_id=req.run_id,
+        )
+    )
+    logger.info(
+        "Approved write applied to Grafana",
+        extra={
+            "tool": req.tool_name,
+            "tenant": req.tenant_id,
+            "run_id": req.run_id,
+            "approval_id": req.approval_id,
+        },
+    )
+
+    return MCPCallResponse(
+        tool_name=req.tool_name,
+        result=result,
+        latency_ms=latency_ms,
+        cache_hit=False,
+        is_stale=False,
         tenant_id=req.tenant_id,
         run_id=req.run_id,
     )

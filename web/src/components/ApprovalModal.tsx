@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldAlert, CheckCircle, ArrowRight, AlertTriangle, Lock, Sparkles } from 'lucide-react';
+import { CheckCircle, Lock, Sparkles } from 'lucide-react';
 import { RemediationOption } from '../types/api';
 
 interface ApprovalModalProps {
@@ -13,8 +13,7 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
   isOpen,
   options,
   onApprove,
-  isExecuting,
-}) => {
+  isExecuting }) => {
   const [selectedOptionId, setSelectedOptionId] = useState<string>(options[0]?.option_id || 'opt-01');
 
   if (!isOpen || options.length === 0) return null;

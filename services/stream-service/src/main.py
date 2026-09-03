@@ -20,7 +20,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # Wildcard origin with credentials is rejected outright by browsers, and
+    # nothing needs it: auth is a JWT bearer token set on the request, not a
+    # cookie the browser attaches on its own.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

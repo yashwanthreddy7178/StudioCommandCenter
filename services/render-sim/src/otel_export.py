@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import base64
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
+from opentelemetry import trace as otel_trace
 from opentelemetry.metrics import CallbackOptions, Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
@@ -23,8 +24,28 @@ from opentelemetry.sdk.resources import Resource
 from src.config import settings
 from src.world import TenantProductionWorld
 from services.common.telemetry import setup_logging
+from services.common.tracing import configure_tracing, shutdown_tracing
 
 logger = setup_logging("render-sim-otel")
+
+
+def _telemetry_resource() -> Resource:
+    """Builds the OTel resource with a stable instance identity.
+
+    Left to the SDK, `service.instance.id` is a fresh UUID per process, which
+    becomes a distinct `instance` label in Prometheus. Every restart then creates
+    a second series per worker, and the previous process's final values stay
+    queryable for the duration of the lookback window. A query then sees both the
+    old and new value for the same worker and picks one arbitrarily, which is
+    enough to make a recovered fleet still read as degraded.
+
+    Pinning the id means restarts write to the same series. Deployments running
+    more than one simulator instance should override it per instance.
+    """
+    return Resource.create({
+        "service.name": settings.service_name,
+        "service.instance.id": settings.service_instance_id,
+    })
 
 
 def _enable_system_trust_store() -> None:
@@ -77,6 +98,7 @@ class OTelTelemetryExporter:
         self._worlds: Dict[str, TenantProductionWorld] = {}
         self._provider: Optional[MeterProvider] = None
         self._log_provider: Optional[Any] = None
+        self._tracer: Optional[Any] = None
         self._farm_logger: Optional[logging.Logger] = None
         # Worker status lines are throttled to the export interval; the simulation
         # ticks far faster than anything needs to be logged.
@@ -85,6 +107,7 @@ class OTelTelemetryExporter:
         if settings.otlp_export_enabled:
             self._start_otlp_pipeline()
             self._start_log_pipeline()
+            self._start_trace_pipeline()
         else:
             logger.info(
                 "OTLP export disabled; set GRAFANA_OTLP_ENDPOINT_URL, "
@@ -111,11 +134,16 @@ class OTelTelemetryExporter:
             export_interval_millis=int(settings.otel_export_interval_sec * 1000),
         )
         self._provider = MeterProvider(
-            resource=Resource.create({"service.name": settings.service_name}),
+            resource=_telemetry_resource(),
             metric_readers=[reader],
         )
         meter = self._provider.get_meter("render-sim")
 
+        # Units are translated into Prometheus name suffixes on ingestion: "s"
+        # yields _seconds, "By" yields _bytes, "1" yields _ratio. Each name below
+        # already carries its correct suffix, so dimensionless counts declare no
+        # unit at all -- unit "1" on a count produced names like
+        # render_queue_depth_frames_ratio, which no query would ever match.
         gauges = [
             ("render_worker_frame_duration_seconds", "s", self._observe_frame_duration),
             ("render_worker_gpu_utilization_ratio", "1", self._observe_gpu_utilization),
@@ -123,11 +151,12 @@ class OTelTelemetryExporter:
             ("render_worker_temperature_celsius", "Cel", self._observe_temperature),
             ("render_worker_cpu_utilization_ratio", "1", self._observe_cpu_utilization),
             ("render_worker_memory_used_bytes", "By", self._observe_memory),
-            ("render_worker_active_jobs", "1", self._observe_active_jobs),
-            ("render_queue_depth_frames", "1", self._observe_queue_depth),
-            ("render_throughput_frames_per_minute", "1", self._observe_throughput),
-            ("render_fleet_total_workers", "1", self._observe_total_workers),
-            ("render_fleet_degraded_workers", "1", self._observe_degraded_workers),
+            ("render_worker_active_jobs", "", self._observe_active_jobs),
+            ("render_queue_depth_frames", "", self._observe_queue_depth),
+            ("render_throughput_frames_per_minute", "", self._observe_throughput),
+            ("render_baseline_throughput_frames_per_minute", "", self._observe_baseline_throughput),
+            ("render_fleet_total_workers", "", self._observe_total_workers),
+            ("render_fleet_degraded_workers", "", self._observe_degraded_workers),
         ]
         for name, unit, callback in gauges:
             meter.create_observable_gauge(name=name, unit=unit, callbacks=[callback])
@@ -157,9 +186,7 @@ class OTelTelemetryExporter:
             endpoint=settings.otlp_logs_endpoint,
             headers={"Authorization": f"Basic {encoded}"},
         )
-        self._log_provider = LoggerProvider(
-            resource=Resource.create({"service.name": settings.service_name})
-        )
+        self._log_provider = LoggerProvider(resource=_telemetry_resource())
         self._log_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
 
         farm_logger = logging.getLogger("render-farm-events")
@@ -175,6 +202,91 @@ class OTelTelemetryExporter:
             "OTLP log pipeline started",
             extra={"endpoint": settings.otlp_logs_endpoint},
         )
+
+    def _start_trace_pipeline(self) -> None:
+        """Builds the OTLP/HTTP trace pipeline feeding Tempo."""
+        if not settings.emit_render_traces:
+            logger.info("Render trace emission disabled by configuration")
+            return
+
+        enabled = configure_tracing(
+            service_name=settings.service_name,
+            service_instance_id=settings.service_instance_id,
+            endpoint_url=settings.grafana_otlp_endpoint_url,
+            otlp_instance_id=settings.grafana_otlp_instance_id,
+            access_policy_token=settings.grafana_access_policy_token,
+        )
+        if not enabled:
+            return
+
+        self._tracer = otel_trace.get_tracer("render-sim")
+        logger.info(
+            "OTLP trace pipeline started",
+            extra={"endpoint": settings.otlp_traces_endpoint},
+        )
+
+    def _emit_render_trace(
+        self, world: TenantProductionWorld, worker: Any, now: datetime
+    ) -> None:
+        """Emits one frame-render trace for a worker.
+
+        Timestamps are set explicitly rather than measured, because nothing here
+        actually sleeps for the duration of a frame. The span tree is the point:
+        asset fetch and output write are held at fixed cost while GPU time
+        absorbs the whole of a frame's slowdown, so a trace search can attribute
+        a slow frame to the GPU and rule out storage and the control API. A flat
+        span carrying only a total duration would prove nothing the frame
+        duration metric does not already say.
+        """
+        if self._tracer is None:
+            return
+
+        duration_sec = max(float(worker.current_frame_duration_sec), 0.3)
+        fetch_sec = 1.2
+        write_sec = 0.8
+        gpu_sec = max(duration_sec - fetch_sec - write_sec, 0.1)
+
+        # `now` is a naive datetime holding UTC. Calling .timestamp() on it makes
+        # Python interpret it as local time, which on any machine that is not on
+        # UTC shifts every span by the offset -- four hours into the future here.
+        # Tempo stored them and no search over a recent window ever matched.
+        end_ns = int(now.replace(tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+        start_ns = end_ns - int(duration_sec * 1_000_000_000)
+
+        attributes: Dict[str, Any] = {
+            **self._worker_attributes(world, worker),
+            "production_id": world.production_id,
+            "tile_size": worker.tile_size,
+            "scene": "sc_04_chase",
+        }
+
+        root = self._tracer.start_span(
+            "render_frame", start_time=start_ns, attributes=attributes
+        )
+        context = otel_trace.set_span_in_context(root)
+
+        cursor = start_ns
+        for name, seconds in (
+            ("fetch_assets", fetch_sec),
+            ("gpu_render", gpu_sec),
+            ("write_output", write_sec),
+        ):
+            child_end = cursor + int(seconds * 1_000_000_000)
+            child = self._tracer.start_span(
+                name, context=context, start_time=cursor, attributes=attributes
+            )
+            if name == "gpu_render":
+                child.set_attribute(
+                    "gpu_utilization_ratio",
+                    round(worker.gpu_utilization_pct / 100.0, 3),
+                )
+                child.set_attribute(
+                    "gpu_memory_used_mb", round(worker.gpu_memory_used_mb, 1)
+                )
+            child.end(end_time=child_end)
+            cursor = child_end
+
+        root.end(end_time=end_ns)
 
     def emit_config_event(
         self,
@@ -287,6 +399,11 @@ class OTelTelemetryExporter:
     def _observe_throughput(self, options: CallbackOptions) -> Iterable[Observation]:
         return self._observe_fleet(lambda w: w.observed_throughput_fpm)
 
+    def _observe_baseline_throughput(self, options: CallbackOptions) -> Iterable[Observation]:
+        # Exported so the agent can derive the shortfall from Grafana rather than
+        # carrying a hardcoded baseline of its own.
+        return self._observe_fleet(lambda w: w.baseline_throughput_fpm)
+
     def _observe_total_workers(self, options: CallbackOptions) -> Iterable[Observation]:
         return self._observe_fleet(lambda w: len(w.workers))
 
@@ -345,6 +462,8 @@ class OTelTelemetryExporter:
             return
 
         for wid, worker in world.workers.items():
+            self._emit_render_trace(world, worker, now)
+
             if worker.is_degraded:
                 level = "warn"
                 line = (
@@ -407,3 +526,4 @@ class OTelTelemetryExporter:
                     "Error shutting down OTLP pipeline",
                     extra={"pipeline": name, "error": str(exc)},
                 )
+        shutdown_tracing()

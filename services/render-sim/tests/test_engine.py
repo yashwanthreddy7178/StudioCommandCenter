@@ -1,6 +1,8 @@
 """Unit and integration tests for the render farm simulation engine."""
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from src.main import app
@@ -134,3 +136,128 @@ async def test_api_endpoints_workflow():
         world_data = res.json()
         assert world_data["is_incident_active"] is False
         assert world_data["degraded_workers"] == 0
+
+
+def test_render_trace_attributes_slowdown_to_the_gpu_span():
+    """A slow frame must show the extra time inside gpu_render, not fetch or write.
+
+    This is the shape the trace-attribution criterion depends on. If a degraded
+    frame simply produced one long flat span, a trace would prove nothing that the
+    frame-duration metric does not already say; the value is in being able to rule
+    out asset storage and the output write as the cause.
+    """
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from src.otel_export import OTelTelemetryExporter
+    from src.world import TenantProductionWorld
+
+    exporter_memory = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter_memory))
+
+    telemetry = OTelTelemetryExporter()
+    telemetry._tracer = provider.get_tracer("test")
+
+    world = TenantProductionWorld(tenant_id="t01", num_workers=2)
+    world.trigger_incident(
+        scenario_type="renderer_tile_regression",
+        affected_worker_ids=["w-01"],
+        new_version="v2.4.1",
+        new_tile_size=2048,
+    )
+
+    healthy = world.workers["w-02"]
+    degraded = world.workers["w-01"]
+    now = datetime.utcnow()
+
+    telemetry._emit_render_trace(world, healthy, now)
+    telemetry._emit_render_trace(world, degraded, now)
+    provider.force_flush()
+
+    spans = exporter_memory.get_finished_spans()
+    by_name = {}
+    for span in spans:
+        by_name.setdefault(span.name, []).append(span)
+
+    # One root plus three children per worker, for two workers.
+    assert len(by_name["render_frame"]) == 2
+    assert len(by_name["gpu_render"]) == 2
+    assert len(by_name["fetch_assets"]) == 2
+    assert len(by_name["write_output"]) == 2
+
+    # Children hang off their own frame, not off each other or off nothing.
+    root_ids = {s.context.span_id for s in by_name["render_frame"]}
+    for name in ("fetch_assets", "gpu_render", "write_output"):
+        for child in by_name[name]:
+            assert child.parent is not None
+            assert child.parent.span_id in root_ids
+
+    def duration_sec(span):
+        return (span.end_time - span.start_time) / 1_000_000_000
+
+    # Fixed costs stay fixed across a healthy and a degraded frame; only the GPU
+    # span absorbs the difference.
+    fetch_durations = {round(duration_sec(s), 3) for s in by_name["fetch_assets"]}
+    write_durations = {round(duration_sec(s), 3) for s in by_name["write_output"]}
+    assert len(fetch_durations) == 1
+    assert len(write_durations) == 1
+
+    gpu_by_worker = {
+        s.attributes["worker_id"]: duration_sec(s) for s in by_name["gpu_render"]
+    }
+    assert gpu_by_worker["w-01"] > gpu_by_worker["w-02"] * 3
+
+    # Tenant and version must be queryable as span attributes, since that is what
+    # a trace search would filter on.
+    frame = by_name["render_frame"][0]
+    assert frame.attributes["tenant_id"] == "t01"
+    assert "renderer_version" in frame.attributes
+
+
+def test_render_trace_timestamps_are_real_epoch_time():
+    """Spans must land at the actual current time, not offset by the UTC offset.
+
+    The exporter timestamps spans from a naive UTC datetime. Converting one with
+    .timestamp() treats it as local time, so on any machine not running on UTC
+    every span was written hours away from now and no search over a recent window
+    matched it. Asserting relative span durations cannot catch that; only the
+    absolute position can.
+    """
+    import time
+
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from src.otel_export import OTelTelemetryExporter
+    from src.world import TenantProductionWorld
+
+    exporter_memory = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter_memory))
+
+    telemetry = OTelTelemetryExporter()
+    telemetry._tracer = provider.get_tracer("test")
+
+    world = TenantProductionWorld(tenant_id="t01", num_workers=1)
+    worker = world.workers["w-01"]
+
+    before = time.time()
+    telemetry._emit_render_trace(world, worker, datetime.utcnow())
+    provider.force_flush()
+    after = time.time()
+
+    frame = next(s for s in exporter_memory.get_finished_spans() if s.name == "render_frame")
+    end_sec = frame.end_time / 1_000_000_000
+
+    # A timezone-offset bug puts this hours away; a correct conversion puts it
+    # within a second or two of the call.
+    assert before - 5 <= end_sec <= after + 5, (
+        f"span ended at {end_sec}, which is {end_sec - after:.0f}s from now"
+    )

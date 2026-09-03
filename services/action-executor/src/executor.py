@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 import httpx
 from src.config import settings
 from src.audit import audit_store
+from src.grafana_writeback import grafana_writeback
 from services.common.models import ActionType, ApprovalRecord, AuditRecord
 from services.common.telemetry import setup_logging
 
@@ -28,8 +29,11 @@ class ActionExecutionEngine:
         user_id: str,
         action_type: ActionType,
         parameters: Dict[str, Any],
+        option_title: str = "",
+        production_consequence: str = "",
+        at_risk_deliverables: Optional[list] = None,
     ) -> Dict[str, Any]:
-        """Idempotently executes approved remediation."""
+        """Idempotently executes approved remediation and records it in Grafana."""
         idempotency_key = hashlib.sha256(f"{run_id}:{option_id}".encode("utf-8")).hexdigest()
 
         # 1. Idempotency Check
@@ -69,7 +73,43 @@ class ActionExecutionEngine:
             status_str = "FAILED"
             msg = f"Control plane execution failed: {str(exc)}"
 
-        # 3. Save Approval and Audit Records
+        # 3. Write the outcome back into Grafana.
+        #
+        # Reading Grafana and then acting silently leaves no trace where the
+        # humans who own the stack are actually looking. This is the other half of
+        # the loop: the approved change is marked on the timeline, and a
+        # deliverable at risk opens an incident carrying the same summary.
+        #
+        # Best-effort by construction. The control plane has already been changed
+        # by this point, so a Grafana failure is recorded and reported but never
+        # turns a successful rollback into a failed one.
+        writeback: Dict[str, Any] = {"enabled": settings.grafana_writeback_enabled}
+        if settings.grafana_writeback_enabled and status_str == "SUCCESS":
+            summary = production_consequence or msg
+            writeback["annotation"] = await grafana_writeback.annotate_remediation(
+                tenant_id=tenant_id,
+                run_id=run_id,
+                approval_id=idempotency_key,
+                user_id=user_id,
+                action_type=action_type.value,
+                summary=summary,
+            )
+            if at_risk_deliverables and settings.grafana_incident_enabled:
+                writeback["incident"] = await grafana_writeback.open_incident(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    approval_id=idempotency_key,
+                    title=(
+                        option_title
+                        or f"Render regression on {tenant_id}: {action_type.value}"
+                    ),
+                    summary=(
+                        f"{summary} At risk: {', '.join(at_risk_deliverables)}."
+                    ),
+                )
+            executor_result = {**executor_result, "grafana_writeback": writeback}
+
+        # 4. Save Approval and Audit Records
         approval_record = ApprovalRecord(
             idempotency_key=idempotency_key,
             run_id=run_id,

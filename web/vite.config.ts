@@ -21,6 +21,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/mcp/, ''),
       },
+      '/api/impact': {
+        target: 'http://localhost:8002',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/impact/, ''),
+      },
       '/api/sim': {
         target: 'http://localhost:8004',
         changeOrigin: true,

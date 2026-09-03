@@ -1,43 +1,56 @@
-import React from 'react';
-import { Layers, Server, Cpu, Flame, CheckCircle, AlertTriangle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Layers, Server, CheckCircle, AlertTriangle } from 'lucide-react';
 import { WorldState } from '../types/api';
+
+/** Mirrors GET /production/sequences on impact-engine. */
+interface SequenceSummary {
+  sequence_id: string;
+  name: string;
+  total_shots: number;
+  completed_shots: number;
+  rendering_shots: number;
+  progress_pct: number;
+  priority: string;
+  deliverables: string[];
+}
 
 interface ProductionBoardProps {
   world: WorldState | null;
+  /**
+   * Sequences the impact projection traced back to the failing workers. This is
+   * the only authority on which sequences are affected: it comes from the
+   * worker-to-shot-to-sequence join, not from a global incident flag.
+   */
+  affectedSequences?: string[];
 }
 
-export const ProductionBoard: React.FC<ProductionBoardProps> = ({ world }) => {
+export const ProductionBoard: React.FC<ProductionBoardProps> = ({
+  world,
+  affectedSequences = [],
+}) => {
   const workers = world?.workers ?? [];
 
-  const sequences = [
-    {
-      id: 'seq-chase',
-      name: 'Final Chase',
-      shots: 1200,
-      priority: 'HIGH',
-      status: world?.is_incident_active ? 'DEGRADED' : 'RENDERING',
-      progress: world?.is_incident_active ? 42 : 78,
-      deliverable: 'SP_VFX_R04',
-    },
-    {
-      id: 'seq-rooftop',
-      name: 'Rooftop Pursuit',
-      shots: 642,
-      priority: 'HIGH',
-      status: world?.is_incident_active ? 'DEGRADED' : 'RENDERING',
-      progress: world?.is_incident_active ? 38 : 84,
-      deliverable: 'SP_VFX_R04',
-    },
-    {
-      id: 'seq-lab',
-      name: 'Laboratory Infiltration',
-      shots: 800,
-      priority: 'NORMAL',
-      status: 'QUEUED',
-      progress: 15,
-      deliverable: 'SP_VFX_R05',
-    },
-  ];
+  // Sequences come from the production metadata in impact-engine. They were
+  // previously a hardcoded array whose progress was a constant that flipped on
+  // is_incident_active, and which named a deliverable that does not exist.
+  const [sequences, setSequences] = useState<SequenceSummary[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/impact/production/sequences');
+        if (!res.ok) return;
+        const rows: SequenceSummary[] = await res.json();
+        if (!cancelled) setSequences(rows);
+      } catch (err) {
+        console.warn('Failed to fetch production sequences', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -50,15 +63,19 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({ world }) => {
               Production Sequences & Shots: Shadow Protocol
             </h3>
           </div>
-          <span className="text-xs font-mono text-slate-400">Total Shots: 2,642</span>
+          <span className="text-xs font-mono text-slate-400">
+            Total Shots: {sequences.reduce((n, s) => n + s.total_shots, 0).toLocaleString() || "—"}
+          </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-          {sequences.map((seq) => (
+          {sequences.map((seq) => {
+            const isAffected = affectedSequences.includes(seq.name);
+            return (
             <div
-              key={seq.id}
+              key={seq.sequence_id}
               className={`border rounded-lg p-4 bg-studio-card/60 transition-all ${
-                seq.status === 'DEGRADED'
+                isAffected
                   ? 'border-red-500/40 bg-red-950/10'
                   : 'border-studio-border/60 hover:border-studio-accent/40'
               }`}
@@ -77,27 +94,28 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({ world }) => {
               </div>
 
               <div className="mt-3 flex items-center justify-between text-xs font-mono text-slate-400">
-                <span>{seq.shots} shots</span>
-                <span className="text-slate-300 font-medium">{seq.deliverable}</span>
+                <span>{seq.total_shots.toLocaleString()} shots</span>
+                <span className="text-slate-300 font-medium">{seq.deliverables.join(', ') || '—'}</span>
               </div>
 
               {/* Progress Bar */}
               <div className="mt-3">
                 <div className="flex justify-between text-[11px] font-mono text-slate-400 mb-1">
                   <span>Progress</span>
-                  <span className="text-white font-bold">{seq.progress}%</span>
+                  <span className="text-white font-bold">{seq.progress_pct}%</span>
                 </div>
                 <div className="w-full bg-studio-bg rounded-full h-1.5 overflow-hidden">
                   <div
                     className={`h-1.5 rounded-full transition-all duration-500 ${
-                      seq.status === 'DEGRADED' ? 'bg-red-500' : 'bg-studio-accent'
+                      isAffected ? 'bg-red-500' : 'bg-studio-accent'
                     }`}
-                    style={{ width: `${seq.progress}%` }}
+                    style={{ width: `${seq.progress_pct}%` }}
                   />
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -137,7 +155,7 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({ world }) => {
                     )}
                   </div>
                   <span className="text-[10px] text-slate-400 font-mono block mt-0.5 truncate">
-                    {w.gpu_type.replace('NVIDIA ', '')}
+                    {w.gpu_type?.replace('NVIDIA ', '') ?? 'unknown GPU'}
                   </span>
                 </div>
 
@@ -146,20 +164,20 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({ world }) => {
                     <span className="text-slate-400">GPU:</span>
                     <span
                       className={`font-bold ${
-                        w.gpu_utilization_pct < 50 ? 'text-red-400' : 'text-slate-200'
+                        (w.gpu_utilization_pct ?? 100) < 50 ? 'text-red-400' : 'text-slate-200'
                       }`}
                     >
-                      {w.gpu_utilization_pct.toFixed(0)}%
+                      {w.gpu_utilization_pct?.toFixed(0) ?? '--'}%
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">Time:</span>
                     <span
                       className={`font-bold ${
-                        w.duration_avg_sec > 60 ? 'text-red-400 font-extrabold' : 'text-slate-200'
+                        (w.current_frame_duration_sec ?? 0) > 60 ? 'text-red-400 font-extrabold' : 'text-slate-200'
                       }`}
                     >
-                      {w.duration_avg_sec.toFixed(0)}s
+                      {w.current_frame_duration_sec?.toFixed(0) ?? '--'}s
                     </span>
                   </div>
                 </div>

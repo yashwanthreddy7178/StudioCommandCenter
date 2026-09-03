@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Terminal, Database, Code, Check, Clock, ChevronDown, ChevronRight, Zap } from 'lucide-react';
+import { Terminal, ChevronDown, ChevronRight, Zap } from 'lucide-react';
 import { StepEvent } from '../types/api';
 
 interface EvidenceLedgerProps {

@@ -7,6 +7,33 @@ Target: 50+ concurrent users | Submission deadline 9 September 2026, 14:00 PT
 
 ---
 
+## 0. Implementation status
+
+**This document is the target design, not a description of the running system.**
+Where the two differ, the code is authoritative. The gaps that matter:
+
+| Area | Specified here | As built |
+|---|---|---|
+| Run state, events, evidence | Firestore | In-process store in `agent-worker` |
+| Approval and audit records | Firestore | In-process store in `action-executor` |
+| Tenant leases | Memorystore Redis | In-process store in `api-gateway` |
+| Run dispatch | Pub/Sub | Direct HTTP call from `api-gateway` |
+| Event delivery to browser | Firestore snapshots | `stream-service` polls `agent-worker` over HTTP |
+| MCP response cache | Memorystore Redis | Redis when reachable, in-process cache otherwise |
+| Production metadata | Cloud SQL Postgres | In-memory SQLite by default; Postgres via `DATABASE_URL` |
+| Trace search (section 6.2) | Tempo via MCP | Implemented via `tempo_traceql-search`; `render-sim` emits the frame spans it reads |
+
+Consequently the system runs as a **single instance**. It starts with no managed
+backend at all, which is why it is easy to run and to deploy, but it does not
+scale horizontally as written. `infra/terraform/` provisions the managed
+backends for the scale-out path; those manifests have not been applied and are
+not wired into the code.
+
+Sections 5 and 14 describe capacity for the distributed design and should be read
+against that caveat.
+
+---
+
 ## 1. Purpose and Scope
 
 This document defines the runtime architecture, data model, concurrency design, and operational limits for Studio Production Commander. It supersedes all earlier architecture sections in the project specification.
@@ -451,9 +478,19 @@ Note: Prometheus and Mimir reject samples timestamped too far in the past, and t
 
 The agent is instrumented with OpenTelemetry and exports to Grafana Cloud. This gives a second, honest use of the partner product and produces a dashboard worth showing in the video.
 
-- Per-run trace spanning plan, tool calls, hypothesis, impact, approval wait, execution, verification.
-- Gemini call latency, token counts, and cost per run.
-- MCP tool call rate, cache hit ratio, upstream QPS against the token bucket ceiling.
+`services/common/tracing.py` installs a global `TracerProvider` with an OTLP span
+exporter. ADK emits GenAI-semantic-convention spans through the global provider,
+so agent invocations, LLM calls and tool calls are exported without changing any
+ADK call site. `agent-worker` adds a root `investigation` span per run and one
+span per MCP call on top of that.
+
+**Implemented:**
+- Per-run trace spanning the investigation, each LLM turn, and each tool call.
+- Gemini call latency and token counts, from ADK's own span attributes.
+- Per-MCP-call spans carrying tool name, latency, cache hit and staleness.
+
+**Not yet implemented:**
+- Cost per run as a derived figure, and upstream QPS against the token bucket ceiling.
 - Run outcome distribution: resolved, low confidence, abandoned, failed.
 - Active tenant leases and observer-mode fallback rate.
 
@@ -464,7 +501,7 @@ A dashboard showing cache hit ratio holding above 90 percent while 50 investigat
 ## 12. Security
 
 - Identity Platform issues JWTs. Anonymous sign-in is acceptable for the demo, with the uid binding the tenant lease.
-- The Grafana service account token holds read scopes for datasource query, alerting read, and incident read. Write scope is not granted.
+- The Grafana service account token holds read scopes for datasource query, alerting read, and incident read, plus annotation and incident **write** scopes used solely by the post-approval write-back. Widening the token does not widen what the model can do: write tools are reachable only through `mcp-gateway`'s `/write` endpoint, which requires an approval id, while the agent's query path validates against an allowlist containing no write tool at all. This is asserted per tool in `services/mcp-gateway/tests/test_gateway.py`.
 - Secrets live in Secret Manager and mount as environment references, never in images or repository files.
 - Internal services accept only ID-token authenticated calls from named service accounts. Ingress is internal-and-load-balancer for everything except `web`, `api-gateway`, and `stream-service`.
 - Cloud Armor applies per-IP rate limits and a WAF ruleset at the edge.

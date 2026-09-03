@@ -39,7 +39,7 @@ class EventType(str, Enum):
 
 class ConfidenceLevel(str, Enum):
     """Confidence level derived from the count of passing falsifiable tests."""
-    HIGH = "HIGH"        # 6 of 6 tests pass
+    HIGH = "HIGH"        # every applicable test passes
     MEDIUM = "MEDIUM"    # 4 to 5 tests pass
     LOW = "LOW"          # <= 3 tests pass
 
@@ -102,7 +102,7 @@ class ProductionWorldState(BaseModel):
     total_workers: int = 8
     healthy_workers: int = 8
     degraded_workers: int = 0
-    queue_depth: int = 18432
+    queue_depth: int = 2800
     workers: List[WorkerStatus] = Field(default_factory=list)
     last_updated: datetime = Field(default_factory=datetime.utcnow)
 
@@ -120,16 +120,38 @@ class FalsifiableTestResult(BaseModel):
     evidence_source: str
     evidence_snippet: str
     explanation: str
+    # False when the connected Grafana MCP server exposes no tool capable of
+    # gathering this evidence. An inapplicable test is excluded from the score
+    # rather than counted as a failure, so a criterion the deployment cannot
+    # reach does not silently cap the achievable confidence.
+    applicable: bool = True
+
+
+class HypothesisVerdict(str, Enum):
+    """Outcome of testing the primary hypothesis.
+
+    A low score has two very different causes that must not be conflated:
+    evidence that actively contradicts the hypothesis is a finding, while
+    evidence that never arrived is an absence of one.
+    """
+    SUPPORTED = "SUPPORTED"        # the tests corroborate the hypothesis
+    REJECTED = "REJECTED"          # the telemetry shows the condition is absent
+    INCONCLUSIVE = "INCONCLUSIVE"  # the evidence needed was not available
 
 
 class HypothesisScorecard(BaseModel):
-    """Scorecard derived from 6 falsifiable hypothesis tests."""
+    """Scorecard derived from the falsifiable hypothesis tests that applied."""
     primary_hypothesis: str
     suspected_cause: str
     tests: List[FalsifiableTestResult]
     passed_count: int
+    # Count of applicable tests, not of tests defined: the denominator shrinks
+    # when the server cannot supply a signal.
     total_tests: int = 6
+    skipped_tests: List[str] = Field(default_factory=list)
     confidence: ConfidenceLevel
+    verdict: HypothesisVerdict = HypothesisVerdict.INCONCLUSIVE
+    headline: str = ""
     missing_evidence_summary: Optional[str] = None
 
 

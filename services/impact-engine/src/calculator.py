@@ -9,7 +9,7 @@ from typing import List, Sequence as TypingSequence, Tuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from src.schema import Deliverable, RenderJob, Sequence, Shot
+from src.schema import Deliverable, RenderJob, Scene, Sequence, Shot
 from services.common.models import ImpactProjection
 
 
@@ -67,63 +67,110 @@ async def calculate_production_impact(
     queue_depth: int,
     as_of: datetime,
 ) -> ImpactProjection:
-    """Queries SQL production metadata and computes full impact projection."""
-    # 1. Fetch active jobs on affected workers
+    """Traces failing workers through to at-risk deliverables and projects delay.
+
+    The join is worker -> render_jobs -> shots -> scenes -> sequences, then back
+    down to every unfinished shot in those sequences and the deliverables they
+    feed. Nothing is assumed: when the metadata yields no match the projection
+    reports zero affected shots rather than substituting a plausible figure.
+    """
+    # 1. What the affected workers were actually rendering.
     jobs_query = (
         select(RenderJob)
         .where(RenderJob.worker_id.in_(affected_workers))
         .options(
             selectinload(RenderJob.shot)
             .selectinload(Shot.scene)
-            .selectinload(Shot.deliverables)
+            .selectinload(Scene.sequence)
         )
     )
     jobs_res = await session.execute(jobs_query)
     jobs = jobs_res.scalars().all()
 
-    # 2. Extract affected shot codes and sequences
-    affected_shot_ids = {j.shot_id for j in jobs}
-    
-    # Also fetch all shots in the impacted scenes/sequences
-    shots_query = (
-        select(Shot)
-        .options(selectinload(Shot.scene), selectinload(Shot.deliverables))
-    )
-    shots_res = await session.execute(shots_query)
-    all_shots = shots_res.scalars().all()
+    # 2. The sequences those shots belong to. Degrading the workers rendering a
+    # sequence puts the rest of that sequence at risk, not just the frames that
+    # happened to be in flight.
+    affected_sequence_ids = {
+        job.shot.scene.sequence_id
+        for job in jobs
+        if job.shot is not None and job.shot.scene is not None
+    }
 
-    affected_shots = [s for s in all_shots if s.priority >= 1 or s.shot_id in affected_shot_ids]
+    affected_shots: List[Shot] = []
+    sequence_names: List[str] = []
+
+    if affected_sequence_ids:
+        shots_query = (
+            select(Shot)
+            .join(Scene, Shot.scene_id == Scene.scene_id)
+            .where(
+                Scene.sequence_id.in_(affected_sequence_ids),
+                Shot.status != "COMPLETE",
+            )
+            .options(selectinload(Shot.deliverables))
+        )
+        shots_res = await session.execute(shots_query)
+        affected_shots = list(shots_res.scalars().all())
+
+        seq_res = await session.execute(
+            select(Sequence.name).where(Sequence.sequence_id.in_(affected_sequence_ids))
+        )
+        sequence_names = list(seq_res.scalars().all())
+
     high_priority_shots = [s for s in affected_shots if s.priority >= 1]
 
-    # Sequences
-    seq_query = select(Sequence.name)
-    seq_res = await session.execute(seq_query)
-    all_sequence_names = [name for name in seq_res.scalars().all() if name in {"Final Chase", "Rooftop Pursuit"}]
+    # 3. The deliverables those shots feed, earliest deadline first.
+    at_risk = {
+        deliverable.deliverable_id: deliverable
+        for shot in affected_shots
+        for deliverable in shot.deliverables
+    }
+    ordered = sorted(at_risk.values(), key=lambda d: d.deadline_utc)
 
-    # Deliverables
-    deliv_query = select(Deliverable).order_by(Deliverable.deadline_utc.asc()).limit(1)
-    deliv_res = await session.execute(deliv_query)
-    primary_deliv = deliv_res.scalars().first()
+    at_risk_names = [d.deliverable_id for d in ordered]
 
-    if primary_deliv:
-        deadline_utc = primary_deliv.deadline_utc
-        deliverable_name = primary_deliv.deliverable_id
+    if ordered:
+        deadline_utc = ordered[0].deadline_utc
     else:
-        deadline_utc = as_of + timedelta(hours=3, minutes=5)
-        deliverable_name = "SP_VFX_R04"
+        # Nothing traced to a deliverable, but the production still has one. The
+        # deadline is a fact about the production, so the queue is still measured
+        # against it; only the at-risk list is empty. Defaulting the deadline to
+        # `as_of` here would report the whole drain time as delay and make a
+        # healthy fleet look further behind than a degraded one.
+        earliest = await session.execute(
+            select(Deliverable).order_by(Deliverable.deadline_utc.asc()).limit(1)
+        )
+        primary = earliest.scalars().first()
+        deadline_utc = primary.deadline_utc if primary else as_of
 
-    # Compute projection
+    behind_baseline = observed_throughput_fpm < baseline_throughput_fpm * 0.9
+    at_risk_now = at_risk_names if behind_baseline else []
+
     projection = compute_deterministic_projection(
         tenant_id=tenant_id,
-        affected_shots_count=len(affected_shots) if affected_shots else 1842,
-        high_priority_count=len(high_priority_shots) if high_priority_shots else 217,
-        sequences=all_sequence_names if all_sequence_names else ["Final Chase", "Rooftop Pursuit"],
+        affected_shots_count=len(affected_shots),
+        high_priority_count=len(high_priority_shots),
+        sequences=sequence_names,
         deadline_utc=deadline_utc,
         observed_throughput_fpm=observed_throughput_fpm,
         baseline_throughput_fpm=baseline_throughput_fpm,
         queue_depth=queue_depth,
-        at_risk_deliverables=[deliverable_name] if observed_throughput_fpm < baseline_throughput_fpm * 0.9 else [],
+        at_risk_deliverables=at_risk_now,
         as_of=as_of,
     )
+
+    # delay_minutes answers "what does this incident cost". With no affected work
+    # and nothing at risk there is no incident-attributable delay, whatever the
+    # deadline happens to be: a deadline that has simply passed would otherwise
+    # be reported as a large delay on a completely healthy fleet, contradicting
+    # the zero affected shots reported alongside it.
+    if not at_risk_now and not affected_shots:
+        projection.delay_minutes = 0
+        projection.is_remediated = True
+        projection.method = (
+            f"no work traced to the affected workers; queue of {queue_depth} frames "
+            f"drains in {queue_depth / max(0.1, observed_throughput_fpm):.0f} min "
+            "with no deliverable at risk"
+        )
 
     return projection

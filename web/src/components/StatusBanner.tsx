@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle2, Info, Zap } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Zap } from 'lucide-react';
 import { RunState } from '../types/api';
 
 interface StatusBannerProps {
@@ -14,7 +14,7 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({ runState, isRecovere
         <div className="flex items-center space-x-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           <span className="font-semibold">
-            REMEDIATION VERIFIED: Renderer rolled back to v2.4.0. GPU throughput restored to 118.6 FPM.
+            REMEDIATION VERIFIED: renderer rolled back and the fleet returned to baseline throughput.
           </span>
         </div>
         <span className="bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded text-[10px] font-bold">

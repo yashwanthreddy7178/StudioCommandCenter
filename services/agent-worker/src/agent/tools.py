@@ -56,6 +56,31 @@ class AgentToolClient:
         res.raise_for_status()
         return ImpactProjection.model_validate(res.json())
 
+    async def verify_remediation(
+        self,
+        tenant_id: str,
+        run_id: str,
+        delay_minutes_before: Optional[int] = None,
+        observed_fpm_before: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Asks action-executor to settle and verify a remediation.
+
+        The pre-action figures come from this run's own projection, so recovery is
+        reported as a measured change rather than an assumption.
+        """
+        url = f"{settings.action_executor_url}/actions/verify"
+        payload = {
+            "tenant_id": tenant_id,
+            "run_id": run_id,
+            "delay_minutes_before": delay_minutes_before,
+            "observed_fpm_before": observed_fpm_before,
+        }
+        # The settle window is deliberately long; the caller runs this in the
+        # background so no request is held open for its duration.
+        res = await self._http_client.post(url, json=payload, timeout=240.0)
+        res.raise_for_status()
+        return res.json()
+
     async def close(self) -> None:
         await self._http_client.aclose()
 

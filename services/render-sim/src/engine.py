@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional
 from src.config import settings
-from src.world import TenantProductionWorld
+from src.world import BASELINE_QUEUE_DEPTH, TenantProductionWorld
 from src.otel_export import OTelTelemetryExporter
 from services.common.telemetry import setup_logging
 
@@ -88,7 +88,11 @@ class SimulationEngine:
         if not world:
             raise KeyError(f"Tenant world '{tenant_id}' not found")
 
-        target_workers = affected_worker_ids or ["w-03", "w-07", "w-11", "w-17"]
+        # Four of the eight workers, drawn from the two high-priority sequence
+        # pools in the production metadata. The previous default named w-11 and
+        # w-17, which do not exist in an eight-worker world, so half the intended
+        # incident silently did nothing.
+        target_workers = affected_worker_ids or ["w-01", "w-03", "w-04", "w-06"]
         world.trigger_incident(
             scenario_type=scenario_type,
             affected_worker_ids=target_workers,
@@ -134,7 +138,7 @@ class SimulationEngine:
             raise KeyError(f"Tenant world '{tenant_id}' not found")
 
         world.rollback_renderer()
-        world.queue_depth = 18432
+        world.queue_depth = BASELINE_QUEUE_DEPTH
         world.observed_throughput_fpm = world.baseline_throughput_fpm
         logger.info("Reset tenant world to baseline", extra={"tenant_id": tenant_id})
         return world

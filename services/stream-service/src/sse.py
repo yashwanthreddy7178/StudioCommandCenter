@@ -19,7 +19,8 @@ async def event_generator(run_id: str, since_seq: int = 0) -> AsyncGenerator[str
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         # Initial connection notification
-        yield f"event: connected\ndata: {json.dumps({'run_id': run_id, 'connected': True})}\n\n"
+        handshake = {"run_id": run_id, "connected": True, "event_type": "CONNECTED"}
+        yield f"data: {json.dumps(handshake)}\n\n"
 
         while True:
             try:
@@ -33,7 +34,12 @@ async def event_generator(run_id: str, since_seq: int = 0) -> AsyncGenerator[str
                         event_type = event.get("event_type", "message")
                         data_str = json.dumps(event)
 
-                        yield f"id: {seq}\nevent: {event_type}\ndata: {data_str}\n\n"
+                        # Deliberately unnamed. An `event:` field routes the frame
+                        # to addEventListener(<name>) and bypasses onmessage
+                        # entirely, so naming these silently dropped every event
+                        # at the browser while the stream looked healthy. The
+                        # client reads event_type from the payload instead.
+                        yield f"id: {seq}\ndata: {data_str}\n\n"
                         current_seq = max(current_seq, seq)
 
                         # If run reached a terminal state or approval state, we can adjust polling rate

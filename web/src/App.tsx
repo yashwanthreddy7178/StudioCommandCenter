@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { DeliveryCountdown } from './components/DeliveryCountdown';
+import { PanelBoundary } from './components/PanelBoundary';
 import { ProductionBoard } from './components/ProductionBoard';
 import { EvidenceLedger } from './components/EvidenceLedger';
 import { HypothesisPanel } from './components/HypothesisPanel';
@@ -29,6 +30,8 @@ export const App: React.FC = () => {
   } = useRunStream(activeRunId);
 
   // Fetch tenant world state from simulator
+  const [productionDeadline, setProductionDeadline] = useState<string | null>(null);
+
   const fetchWorld = useCallback(async () => {
     if (!lease) return;
     try {
@@ -47,6 +50,31 @@ export const App: React.FC = () => {
     const interval = setInterval(fetchWorld, 3000);
     return () => clearInterval(interval);
   }, [fetchWorld]);
+
+  // The delivery deadline is a property of the production, not an output of an
+  // investigation, so it is shown from the moment the board loads rather than
+  // staying blank until a run produces a projection.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/impact/deliverables');
+        if (!res.ok) return;
+        const rows = await res.json();
+        if (!cancelled && rows.length > 0) {
+          const soonest = rows
+            .map((d: { deadline_utc: string }) => d.deadline_utc)
+            .sort()[0];
+          setProductionDeadline(soonest);
+        }
+      } catch (err) {
+        console.warn('Failed to fetch production deadline', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Open approval modal automatically when run state reaches AWAITING_APPROVAL
   useEffect(() => {
@@ -155,19 +183,36 @@ export const App: React.FC = () => {
         <StatusBanner runState={runState} isRecovered={Boolean(isRecovered)} />
 
         {/* Top: Delivery Countdown & Shift */}
-        <DeliveryCountdown impact={effectiveImpact} world={world} />
+        <PanelBoundary name="Delivery Projection">
+          <DeliveryCountdown
+            impact={effectiveImpact}
+            world={world}
+            productionDeadline={productionDeadline}
+          />
+        </PanelBoundary>
 
         {/* Middle: Production Board (Sequences & Worker Fleet) */}
-        <ProductionBoard world={world} />
+        <PanelBoundary name="Production Board">
+          <ProductionBoard
+            world={world}
+            affectedSequences={effectiveImpact?.sequences ?? []}
+          />
+        </PanelBoundary>
 
         {/* Bottom Split: Autonomous Evidence Ledger & Falsifiable Hypothesis Matrix */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <EvidenceLedger events={events} />
-          <HypothesisPanel hypothesis={hypothesis} />
+          <PanelBoundary name="Evidence Ledger">
+            <EvidenceLedger events={events} />
+          </PanelBoundary>
+          <PanelBoundary name="Hypothesis Panel">
+            <HypothesisPanel hypothesis={hypothesis} />
+          </PanelBoundary>
         </div>
 
         {/* Concurrency & Gateway Telemetry Stats */}
-        <AgentMetrics />
+        <PanelBoundary name="Agent Metrics">
+          <AgentMetrics />
+        </PanelBoundary>
       </main>
 
       {/* Approval Modal (Human-in-the-loop Gate) */}
