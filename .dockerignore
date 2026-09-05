@@ -1,0 +1,39 @@
+# Keeps the build context to the source that actually gets built.
+#
+# Without this, `gcloud builds submit` uploads 320 MB of virtualenv, node_modules
+# and the vendored MCP binary on every build - all of which the image either
+# reinstalls from the lockfiles or fetches fresh.
+
+# Local environments, reinstalled inside the image from each service's pyproject
+venv/
+.venv/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+**/.coverage
+
+# Reinstalled by `npm ci`, and rebuilt by `npm run build`
+web/node_modules/
+node_modules/
+web/dist/
+
+# The Grafana MCP binary is fetched fresh in its own build stage, for Linux.
+# The vendored copy here is whatever the developer's own platform needed.
+.tools/
+
+# Credentials. Never in the build context, so never in an image layer.
+.env
+*.pem
+*.key
+
+.git/
+.github/
+.agents/
+
+# Documentation and infrastructure definitions are not inputs to the runtime
+infra/
+docs/
+*.md
+LICENSE

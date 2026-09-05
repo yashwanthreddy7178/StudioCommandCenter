@@ -100,6 +100,19 @@ def summarise_for_model(result: Any, max_series: int = 12) -> str:
     token budget while preserving everything the next decision depends on. Raw
     payloads stay in the evidence ledger and are referenced by id.
     """
+    if isinstance(result, list):
+        # Metric- and label-name listings arrive as a bare list of strings. A
+        # Python repr of that list is technically readable but wastes tokens on
+        # quoting and gives the model no structure to work from.
+        names = [str(x) for x in result if isinstance(x, (str, int, float))]
+        if names:
+            head = names[:60]
+            rendered = "\n".join(f"  {n}" for n in head)
+            if len(names) > len(head):
+                rendered += f"\n  ... and {len(names) - len(head)} more"
+            return rendered
+        return str(result)[:1500]
+
     if not isinstance(result, dict):
         return str(result)[:1500]
 

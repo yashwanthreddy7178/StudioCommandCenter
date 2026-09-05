@@ -1,0 +1,179 @@
+{
+  "uid": "spc-agent",
+  "title": "Studio Production Commander \u2014 Agent",
+  "description": "Observability for the agent itself: the same stack, the same timeline, the same query language as the farm it investigates.",
+  "tags": [
+    "studio-production-commander"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "#D2691E",
+        "name": "Approved remediations",
+        "target": {
+          "type": "tags",
+          "matchAny": false,
+          "tags": [
+            "studio-production-commander"
+          ],
+          "limit": 100
+        }
+      }
+    ]
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "transparent": true,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "The agent's own traces, in the same stack it queries. A run is one `investigation` span: the LLM turns beneath it carry token counts, and each `mcp.*` span carries the tool called, its latency, and whether the gateway served it from cache instead of reaching Grafana at all."
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Investigations",
+      "description": "One row per run. Open a trace to see the turns, the tool calls, and where the time went.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "grafanacloud-traces"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"agent-worker\" && name = \"investigation\" }",
+          "limit": 20
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "MCP tool calls",
+      "description": "Every query the agent issued to Grafana, with latency and cache outcome as span attributes.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "grafanacloud-traces"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"agent-worker\" && name =~ \"mcp.*\" }",
+          "limit": 20
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Render farm frames",
+      "description": "The spans behind the trace-attribution criterion. Compare gpu_render against fetch_assets and write_output inside a frame.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "grafanacloud-traces"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"render-sim\" && name = \"render_frame\" }",
+          "limit": 20
+        }
+      ]
+    }
+  ]
+}

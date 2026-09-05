@@ -1,0 +1,42 @@
+# What `gcloud builds submit` uploads.
+#
+# This file exists because of a failure that is hard to read from the error:
+# without a .gcloudignore, gcloud filters the upload using .gitignore. This
+# repository's .gitignore blocks *.json to keep service account keys out, so the
+# npm lockfile never reached Cloud Build and the image failed at
+# `COPY web/package-lock.json` with "file does not exist" -- while the identical
+# `docker build` succeeded locally, because Docker reads .dockerignore instead.
+#
+# Keep this in step with .dockerignore. The rules are the same intent: upload the
+# source that gets built, and nothing that gets reinstalled or refetched.
+
+# Rebuilt inside the image from the lockfiles
+venv/
+.venv/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+**/.coverage
+web/node_modules/
+node_modules/
+web/dist/
+
+# Fetched fresh, for Linux, in its own build stage
+.tools/
+
+# Credentials never leave the machine
+.env
+*.pem
+*.key
+
+.git/
+.gitignore
+.github/
+
+# Not build inputs
+infra/
+docs/
+*.md
+LICENSE

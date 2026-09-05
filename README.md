@@ -252,6 +252,61 @@ interval (15s) to reach Grafana before the agent can find it.
 
 ---
 
+## Deploying to Cloud Run
+
+The whole system deploys as **one container running as one instance**. That is
+what the code is, not a shortcut: run state, the evidence ledger, the audit trail
+and the tenant lease pool all live in process memory, so a second instance would
+not share them and a browser polling for run events could reach an instance that
+has never heard of the run. See *Deployment model and state*.
+
+The image bundles the seven services, the built SPA, nginx, and the Grafana MCP
+server as a sidecar process. No Firestore, no Pub/Sub, no Memorystore and no
+Cloud SQL are required to run it.
+
+```bash
+# One command. Reads Grafana settings from .env, puts the two credentials into
+# Secret Manager, builds with Cloud Build, and deploys.
+deploy/deploy.sh
+```
+
+It enables the required APIs, creates an Artifact Registry repository and a
+runtime service account, grants that account `roles/aiplatform.user` so the agent
+reaches Gemini through Application Default Credentials, and deploys. No API key
+for the model exists anywhere in the image or the configuration.
+
+### The flags that matter
+
+| Flag | Why |
+|---|---|
+| `--min-instances 1 --max-instances 1` | State is in process memory; a second instance would not share it |
+| `--no-cpu-throttling` | render-sim ticks on a background task and investigations continue after the HTTP response; Cloud Run's default throttles CPU to near zero between requests, which would freeze both |
+| `--timeout 3600` | SSE connections are long-lived. The stream's own ceiling is 30 minutes, comfortably inside this |
+| `--set-secrets` | The Grafana tokens come from Secret Manager, so they are not readable from the service description |
+
+### Verifying a deployment
+
+```bash
+URL=$(gcloud run services describe studio-production-commander         --region us-central1 --format='value(status.url)')
+
+curl -s "$URL/api/gateway/readyz"
+curl -s "$URL/api/sim/readyz"
+curl -s "$URL/api/mcp/readyz"
+```
+
+Then open `$URL`, take a tenant world, trigger the scenario and start a run.
+
+### Why nginx is in the image
+
+The SPA calls relative paths (`/api/gateway/runs`, `/api/stream/...`). In
+development Vite's dev-server proxy resolves them; that proxy does not exist in a
+production build. Without the reverse proxy the page would load perfectly and
+every API call would 404 against the static root. The stream location disables
+proxy buffering, or the evidence ledger would arrive in one burst at the end of a
+run instead of building as the agent works.
+
+---
+
 ## 🧪 Testing & Verification
 
 Each service pins its own `src` package, so the suites are run **one service at a

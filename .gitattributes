@@ -1,0 +1,38 @@
+# Line endings.
+#
+# This repository is edited on Windows and executed on Linux: the deploy scripts
+# run in WSL, and entrypoint.sh runs inside the container. A CRLF shell script
+# fails in ways that do not point at line endings -- bash reports
+# `set: pipefail: invalid option name` because it read `pipefail\r`, and a
+# container entrypoint reports that the interpreter does not exist. Both cost
+# more time to diagnose than they should.
+#
+# Normalising to LF in the repository keeps the checked-out files runnable on
+# either side regardless of anyone's core.autocrlf setting.
+
+* text=auto eol=lf
+
+*.sh      text eol=lf
+*.py      text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.ts      text eol=lf
+*.tsx     text eol=lf
+*.css     text eol=lf
+*.html    text eol=lf
+*.tf      text eol=lf
+Dockerfile        text eol=lf
+*.conf            text eol=lf
+*.template        text eol=lf
+.env.example      text eol=lf
+
+# Never touched
+*.png  binary
+*.jpg  binary
+*.webp binary
+*.ico  binary
+*.exe  binary
+*.gz   binary
+*.zip  binary

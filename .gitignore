@@ -87,7 +87,16 @@ dist-ssr/
 *.tfvars.json
 
 # Service Account Keys & Secrets
+#
+# Blocking every .json is a blunt way to keep credentials out, and it silently
+# took several files that have to be in the repository with it: without the npm
+# lockfile the image cannot `npm ci`, and nobody can reproduce the dependency
+# tree; without the dashboard definitions the Grafana setup is not reviewable.
+# The negations below are the files that must be tracked.
 *.json
 !package.json
+!package-lock.json
 !tsconfig.json
 !tsconfig.node.json
+!infra/grafana/dashboards/*.json
+!.github/**/*.json

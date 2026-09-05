@@ -46,12 +46,17 @@ class Settings(BaseSettings):
     synthesis_model: str = "gemini-2.5-pro"
     max_investigation_turns: int = 14
 
-    # When true the agent is given a metric-name discovery tool and told to
-    # enumerate the farm's series itself rather than being handed the list. It
-    # costs a turn and makes the run less deterministic, which is the trade: an
-    # agent that discovers what exists is doing the investigation, not reciting
-    # an inventory. Set false to pin the demo to the fixed list.
-    enable_metric_discovery: bool = True
+    # Whether the agent discovers metric names itself instead of being given
+    # them.
+    #
+    # Off by default because it measurably hurt a live run: handed an
+    # alphabetical listing, the agent queried fleet throughput, queue depth and
+    # active jobs but never per-worker frame duration or GPU utilisation, and the
+    # scorecard came back 2 of 6 with "frame duration was never queried". The
+    # named inventory keeps the ordering that anchors the investigation on the
+    # signals the falsifiable tests actually read. Turn it on to demonstrate
+    # self-discovery, and re-check the scorecard when you do.
+    enable_metric_discovery: bool = False
 
     # Whether the connected Grafana MCP server exposes a trace-search tool.
     #

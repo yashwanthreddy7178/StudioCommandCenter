@@ -1,0 +1,98 @@
+# Serves the built SPA and routes its /api/* prefixes to the services behind it.
+#
+# These five prefixes are not invented here. The frontend calls them directly
+# (`fetch('/api/gateway/runs')`), and in development Vite's dev-server proxy
+# resolves them. That proxy does not exist in a production build, so without
+# this file every API call in the deployed app would 404 against the static
+# root while the page itself loaded perfectly.
+#
+# __PORT__ is replaced at startup: Cloud Run assigns the port through $PORT and
+# nginx has no way to read an environment variable on its own.
+
+worker_processes auto;
+error_log /dev/stderr warn;
+pid /tmp/nginx/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    access_log    /dev/stdout;
+
+    sendfile      on;
+    tcp_nopush    on;
+    server_tokens off;
+
+    # The container filesystem is read-only under a hardened Cloud Run
+    # configuration; keep every scratch path under /tmp.
+    client_body_temp_path /tmp/nginx/client_body;
+    proxy_temp_path       /tmp/nginx/proxy;
+    fastcgi_temp_path     /tmp/nginx/fastcgi;
+    uwsgi_temp_path       /tmp/nginx/uwsgi;
+    scgi_temp_path        /tmp/nginx/scgi;
+
+    upstream api_gateway    { server 127.0.0.1:8000; }
+    upstream mcp_gateway    { server 127.0.0.1:8001; }
+    upstream impact_engine  { server 127.0.0.1:8002; }
+    upstream render_sim     { server 127.0.0.1:8004; }
+    upstream stream_service { server 127.0.0.1:8005; }
+
+    server {
+        listen __PORT__;
+        root /app/web/dist;
+        index index.html;
+
+        # An investigation runs for a minute or more and the browser holds the
+        # connection open across it.
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+
+        location /api/gateway/ {
+            proxy_pass http://api_gateway/;
+        }
+
+        location /api/mcp/ {
+            proxy_pass http://mcp_gateway/;
+        }
+
+        location /api/impact/ {
+            proxy_pass http://impact_engine/;
+        }
+
+        location /api/sim/ {
+            proxy_pass http://render_sim/;
+        }
+
+        # Server-sent events. Buffering here would hold each frame until the
+        # buffer filled, so the evidence ledger would arrive in bursts at the end
+        # of a run instead of building up as the agent works - the stream would
+        # look healthy and feel broken.
+        location /api/stream/ {
+            proxy_pass http://stream_service/;
+            proxy_buffering off;
+            proxy_cache off;
+            gzip off;
+            chunked_transfer_encoding on;
+            add_header X-Accel-Buffering no;
+        }
+
+        # Hashed asset filenames, so they can be cached hard.
+        location /assets/ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+
+        # Single-page app: unknown paths are client-side routes, not 404s.
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}

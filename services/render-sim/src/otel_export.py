@@ -169,6 +169,30 @@ class OTelTelemetryExporter:
             },
         )
 
+    @staticmethod
+    def _build_log_handler(level: int, logger_provider: Any) -> Any:
+        """Builds a log handler that omits source-location attributes.
+
+        The SDK handler attaches code.file.path, code.function.name and
+        code.line.number to every record. These arrive in Loki as structured
+        metadata rather than stream labels, so they cost no cardinality, but
+        code.file.path is the absolute path of whatever checkout produced the log
+        and there is no reason to publish it. The farm attributes already carry
+        everything a query needs.
+        """
+        from opentelemetry.sdk._logs import LoggingHandler
+
+        dropped = {"code.file.path", "code.function.name", "code.line.number"}
+        base_get_attributes = LoggingHandler._get_attributes
+
+        class _FarmLoggingHandler(LoggingHandler):
+            @staticmethod
+            def _get_attributes(record):
+                attributes = base_get_attributes(record)
+                return {k: v for k, v in attributes.items() if k not in dropped}
+
+        return _FarmLoggingHandler(level=level, logger_provider=logger_provider)
+
     def _start_log_pipeline(self) -> None:
         """Builds the OTLP/HTTP log pipeline feeding Loki.
 
@@ -176,7 +200,7 @@ class OTelTelemetryExporter:
         service's own stdout logging is not shipped upstream as well.
         """
         from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs import LoggerProvider
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 
         credential = f"{settings.grafana_otlp_instance_id}:{settings.grafana_access_policy_token}"
@@ -194,7 +218,7 @@ class OTelTelemetryExporter:
         farm_logger.propagate = False
         if not farm_logger.handlers:
             farm_logger.addHandler(
-                LoggingHandler(level=logging.INFO, logger_provider=self._log_provider)
+                self._build_log_handler(logging.INFO, self._log_provider)
             )
         self._farm_logger = farm_logger
 

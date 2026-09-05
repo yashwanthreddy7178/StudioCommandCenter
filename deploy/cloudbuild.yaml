@@ -1,0 +1,28 @@
+# Cloud Build config for the single-image deployment.
+#
+# `gcloud builds submit --tag` only ever builds a Dockerfile at the root of the
+# build context and has no flag for pointing at one elsewhere, so keeping the
+# Dockerfile under deploy/ requires an explicit build step like this rather than
+# a one-liner.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=deploy/Dockerfile
+      - --tag=${_IMAGE}
+      - .
+
+images:
+  - ${_IMAGE}
+
+options:
+  # The image installs seven Python services and runs a full npm build, so the
+  # default machine is slower than it needs to be.
+  machineType: E2_HIGHCPU_8
+  # Left at the default deliberately. CLOUD_LOGGING_ONLY stops `gcloud builds
+  # submit` from streaming the build output, so a failure prints only "build step
+  # 0 failed" and the actual error has to be chased down separately.
+
+# Comfortably beyond the ~4 minutes the build takes, so a slow npm or PyPI
+# mirror does not fail the deploy.
+timeout: 1800s

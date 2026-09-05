@@ -1,0 +1,137 @@
+name: Deploy to Cloud Run
+
+# Every push to main that touches something the running service is built from.
+# Documentation and the dashboard definitions are excluded: redeploying the whole
+# service because a README paragraph changed wastes four minutes and adds a
+# revision that is identical to the one before it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "web/**"
+      - "scripts/**"
+      - "deploy/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+env:
+  PROJECT: ${{ vars.GCP_PROJECT }}
+  REGION: ${{ vars.GCP_REGION }}
+  SERVICE: studio-production-commander
+  REPO: spc
+
+jobs:
+  # The suite is a gate, not a report. A broken investigation loop that reaches
+  # Cloud Run is a broken demo, and the whole point of deploying on push is that
+  # nobody is watching the deploy.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install services
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            -e services/render-sim -e services/mcp-gateway \
+            -e services/impact-engine -e services/action-executor \
+            -e services/agent-worker -e services/api-gateway \
+            -e services/stream-service
+          pip install pytest pytest-asyncio pytest-cov
+
+      # One service at a time: each pins its own `src` package, so pointing
+      # pytest at two service directories at once makes the import ambiguous and
+      # collection fails.
+      - name: Run tests
+        run: |
+          set -e
+          for s in render-sim mcp-gateway impact-engine action-executor \
+                   agent-worker api-gateway stream-service; do
+            echo "::group::$s"
+            if [ "$s" = "impact-engine" ]; then
+              python -m pytest "services/$s/tests" -q --no-cov
+            else
+              python -m pytest "services/$s/tests" -q
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Submission compliance audit
+        run: python scripts/compliance_audit.py
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # A service account key, for setup simplicity. It is a long-lived
+      # credential, so it is worth knowing what it can do: this account can push
+      # images and update the Cloud Run service, and nothing else. It cannot read
+      # the Grafana secrets -- only the runtime account can -- and it cannot grant
+      # itself anything further.
+      #
+      # deploy/setup-github-oidc.sh swaps this for keyless Workload Identity
+      # Federation when the extra setup is worth it.
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      # Built on the runner rather than through Cloud Build. It is the same
+      # `docker build -f deploy/Dockerfile` that runs locally, it needs no
+      # staging bucket or Cloud Build permissions, and the runner already has a
+      # warm Docker daemon.
+      - name: Build and push
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${SERVICE}"
+          docker build \
+            --file deploy/Dockerfile \
+            --tag "${IMAGE}:${GITHUB_SHA}" \
+            --tag "${IMAGE}:latest" \
+            .
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          docker push "${IMAGE}:latest"
+
+      # Deployed by digest-pinned tag rather than :latest, so a rollback is
+      # `gcloud run deploy --image ...:<older sha>` and the revision history says
+      # which commit is actually running.
+      - name: Deploy to Cloud Run
+        env:
+          IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/spc/studio-production-commander:${{ github.sha }}
+          RUNTIME_SA: spc-runtime@${{ vars.GCP_PROJECT }}.iam.gserviceaccount.com
+          GRAFANA_STACK_URL: ${{ vars.GRAFANA_STACK_URL }}
+          GRAFANA_OTLP_ENDPOINT_URL: ${{ vars.GRAFANA_OTLP_ENDPOINT_URL }}
+          GRAFANA_OTLP_INSTANCE_ID: ${{ vars.GRAFANA_OTLP_INSTANCE_ID }}
+        run: bash deploy/cloud-run-deploy.sh
+
+      # A deploy that reports success while the service answers 503 is worse than
+      # a failed one, because nothing tells you.
+      - name: Smoke test the revision
+        run: |
+          URL="$(gcloud run services describe "${SERVICE}" \
+                  --project "${PROJECT}" --region "${REGION}" \
+                  --format='value(status.url)')"
+          echo "URL: ${URL}"
+          for path in /api/gateway/readyz /api/sim/readyz /api/mcp/readyz /api/stream/readyz; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --retry 5 --retry-delay 5 "${URL}${path}")"
+            echo "  ${path} -> ${code}"
+            [ "${code}" = "200" ] || { echo "::error::${path} returned ${code}"; exit 1; }
+          done
+          echo "### Deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "${URL}" >> "$GITHUB_STEP_SUMMARY"

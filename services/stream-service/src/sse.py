@@ -11,6 +11,14 @@ from services.common.telemetry import setup_logging
 
 logger = setup_logging("stream-service-sse")
 
+# Events after which a run has nothing further to say.
+#
+# APPROVAL_REQUIRED is deliberately absent: the stream has to stay open across
+# the wait for a human, or the verification that follows the approval would never
+# reach the browser. DEGRADED is absent too - it is emitted for a single failed
+# tool call mid-investigation, not only at the end of a run.
+TERMINAL_EVENTS = {"COMPLETED", "ERROR", "VERIFICATION"}
+
 
 async def event_generator(run_id: str, since_seq: int = 0) -> AsyncGenerator[str, None]:
     """Streams run step events to the browser using Server-Sent Events (SSE)."""
@@ -22,7 +30,10 @@ async def event_generator(run_id: str, since_seq: int = 0) -> AsyncGenerator[str
         handshake = {"run_id": run_id, "connected": True, "event_type": "CONNECTED"}
         yield f"data: {json.dumps(handshake)}\n\n"
 
-        while True:
+        started = time.time()
+        finished = False
+
+        while not finished:
             try:
                 # Fetch new events from agent-worker
                 url = f"{settings.agent_worker_url}/runs/{run_id}/events?since_seq={current_seq}"
@@ -42,17 +53,43 @@ async def event_generator(run_id: str, since_seq: int = 0) -> AsyncGenerator[str
                         yield f"id: {seq}\ndata: {data_str}\n\n"
                         current_seq = max(current_seq, seq)
 
-                        # If run reached a terminal state or approval state, we can adjust polling rate
-                        if event_type in {"APPROVAL_REQUIRED", "COMPLETED", "FAILED"}:
-                            logger.info("Run reached milestone in stream", extra={"run_id": run_id, "event": event_type})
+                        if event_type in TERMINAL_EVENTS:
+                            logger.info(
+                                "Run reached a terminal event, closing stream",
+                                extra={"run_id": run_id, "event": event_type},
+                            )
+                            finished = True
+                            break
 
-                # Heartbeat keep-alive
+                if finished:
+                    break
+
                 now = time.time()
+
+                # Without this the loop had no exit at all except the client
+                # going away, and under an ASGI transport that signal never
+                # arrives -- which is why the test suite hung rather than failed.
+                if now - started >= settings.sse_max_stream_sec:
+                    logger.info(
+                        "SSE stream reached its duration ceiling",
+                        extra={"run_id": run_id},
+                    )
+                    closing = {
+                        "run_id": run_id,
+                        "event_type": "STREAM_TIMEOUT",
+                        "description": (
+                            "Stream closed after reaching its duration limit. "
+                            "Reopen it to resume from the last event id."
+                        ),
+                    }
+                    yield f"data: {json.dumps(closing)}\n\n"
+                    break
+
                 if now - last_heartbeat >= settings.sse_heartbeat_interval_sec:
                     yield ": heartbeat\n\n"
                     last_heartbeat = now
 
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(settings.sse_poll_interval_sec)
 
             except asyncio.CancelledError:
                 logger.info("Client disconnected from SSE stream", extra={"run_id": run_id})

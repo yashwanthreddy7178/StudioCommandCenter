@@ -116,6 +116,33 @@ async def start_investigation(req: InvestigateRequest, background_tasks: Backgro
             run_doc.error_message = str(exc)
             await store.save_run(run_doc)
 
+            # The client is watching the event stream, not the run document, so a
+            # failure that writes only to the document leaves the browser showing
+            # "Investigating..." forever. A terminal event is the only thing that
+            # tells it to stop waiting, and it has to carry the reason: an
+            # exhausted model quota and an unreachable Grafana look identical from
+            # the outside otherwise.
+            detail = str(exc).strip().splitlines()
+            summary = next(
+                (line for line in reversed(detail) if line.strip()), "Unknown error"
+            )
+            try:
+                await store.emit_event(
+                    StepEvent(
+                        seq=(run_doc.step_count or 0) + 1,
+                        run_id=req.run_id,
+                        tenant_id=req.tenant_id,
+                        event_type=EventType.ERROR,
+                        title="Investigation Failed",
+                        description=summary[:300],
+                        payload={"error": str(exc)[:600]},
+                    )
+                )
+            except Exception:
+                logger.error(
+                    "Could not emit failure event", extra={"run_id": req.run_id}
+                )
+
     background_tasks.add_task(_execute_loop)
 
     return {
