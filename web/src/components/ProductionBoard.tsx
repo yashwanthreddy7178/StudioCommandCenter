@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Layers, Server, CheckCircle, AlertTriangle } from 'lucide-react';
 import { WorldState } from '../types/api';
+import { apiFetch } from '../lib/auth';
 
 /** Mirrors GET /production/sequences on impact-engine. */
 interface SequenceSummary {
@@ -39,7 +40,7 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/impact/production/sequences');
+        const res = await apiFetch('/api/impact/production/sequences');
         if (!res.ok) return;
         const rows: SequenceSummary[] = await res.json();
         if (!cancelled) setSequences(rows);

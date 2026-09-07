@@ -29,6 +29,10 @@ class TenantProductionWorld:
         self.is_incident_active = False
         self.incident_type: Optional[str] = None
         self.queue_depth = BASELINE_QUEUE_DEPTH
+        # Sequences moved to the front of the render queue by an approved
+        # reprioritisation. Held as real state so the action has an observable
+        # effect: it used to report success and change nothing at all.
+        self.priority_sequences: List[str] = []
         self.last_updated = utc_now()
         self.workers: Dict[str, RenderWorkerNode] = {}
 
@@ -175,6 +179,7 @@ class TenantProductionWorld:
             "baseline_throughput_fpm": self.baseline_throughput_fpm,
             "observed_throughput_fpm": self.observed_throughput_fpm,
             "queue_depth": self.queue_depth,
+            "priority_sequences": list(self.priority_sequences),
             "total_workers": len(self.workers),
             "healthy_workers": sum(1 for w in self.workers.values() if not w.is_degraded and not w.is_drained),
             "degraded_workers": sum(1 for w in self.workers.values() if w.is_degraded and not w.is_drained),

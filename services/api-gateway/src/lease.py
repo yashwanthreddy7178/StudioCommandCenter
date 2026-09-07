@@ -66,23 +66,54 @@ class TenantLeaseManager:
             logger.info("Pool exhausted: assigned observer mode lease", extra={"session_id": session_id})
             return observer_lease
 
+    @staticmethod
+    def _key(tenant_id: str, session_id: str) -> str:
+        """The dict key holding a lease, which is not always the tenant id.
+
+        Writable leases are keyed by tenant because one tenant world has one
+        holder. Observer leases all name the same shared world, so they are keyed
+        per session instead -- and every lookup by tenant id therefore missed
+        them entirely. Heartbeats from an observer session silently returned
+        False and its lease expired underneath it while the browser was still
+        sending them.
+        """
+        if tenant_id == "observer":
+            return f"obs-{session_id}"
+        return tenant_id
+
     async def heartbeat(self, tenant_id: str, session_id: str) -> bool:
         """Extends the lease TTL via periodic client heartbeat."""
         async with self._lock:
             now = utc_now()
-            lease = self._leases.get(tenant_id)
+            lease = self._leases.get(self._key(tenant_id, session_id))
             if lease and lease.session_id == session_id and lease.expires_at > now:
                 lease.heartbeat_at = now
                 lease.expires_at = now + timedelta(seconds=settings.tenant_lease_ttl_sec)
                 return True
             return False
 
+    async def holds_lease(self, tenant_id: str, session_id: str) -> bool:
+        """Reports whether this session currently holds a live lease on a tenant.
+
+        Separate from `heartbeat`, which answers the same question but extends
+        the lease as a side effect. A permission check must not renew the thing
+        it is checking.
+        """
+        async with self._lock:
+            lease = self._leases.get(self._key(tenant_id, session_id))
+            return bool(
+                lease
+                and lease.session_id == session_id
+                and lease.expires_at > utc_now()
+            )
+
     async def release_lease(self, tenant_id: str, session_id: str) -> bool:
         """Releases a tenant lease back to the pool."""
         async with self._lock:
-            lease = self._leases.get(tenant_id)
+            key = self._key(tenant_id, session_id)
+            lease = self._leases.get(key)
             if lease and lease.session_id == session_id:
-                del self._leases[tenant_id]
+                del self._leases[key]
                 logger.info("Released tenant lease", extra={"tenant_id": tenant_id, "session_id": session_id})
                 return True
             return False

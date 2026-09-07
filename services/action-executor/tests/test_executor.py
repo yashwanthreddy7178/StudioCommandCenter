@@ -1,6 +1,8 @@
 """Unit and integration tests for action-executor."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from src.main import app
@@ -336,3 +338,55 @@ async def test_no_incident_without_a_deliverable_at_risk(
     )
 
     assert [w["tool_name"] for w in writes] == ["create_annotation"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_approvals_of_one_option_execute_once():
+    """Verify simultaneous approvals do not both reach the control plane.
+
+    The duplicate check and the record that satisfies it are separated by an
+    HTTP call, so before the per-key lock both callers saw no existing record
+    and both executed the remediation.
+    """
+    from src.executor import action_engine
+    from services.common.models import ActionType
+
+    calls: list = []
+
+    class _CountingResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"status": "APPLIED", "message": "ok"}
+
+    async def _counting_post(url, json=None, **kwargs):
+        calls.append(url)
+        # Yield control so a second caller can interleave here, which is exactly
+        # the window the race used to open.
+        await asyncio.sleep(0.01)
+        return _CountingResponse()
+
+    original = action_engine._http_client.post
+    action_engine._http_client.post = _counting_post
+    try:
+        results = await asyncio.gather(*[
+            action_engine.execute_approved_action(
+                run_id="run-race",
+                option_id="opt-01",
+                tenant_id="t01",
+                user_id="usr-test",
+                action_type=ActionType.ROLLBACK_RENDERER_CONFIG,
+                parameters={"target_version": "v2.4.0"},
+            )
+            for _ in range(5)
+        ])
+    finally:
+        action_engine._http_client.post = original
+
+    assert len(calls) == 1, f"control plane called {len(calls)} times"
+    statuses = sorted(r["status"] for r in results)
+    assert statuses.count("ALREADY_APPLIED") == 4
+    assert statuses.count("SUCCESS") == 1

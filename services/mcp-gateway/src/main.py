@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Deque, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -20,6 +21,7 @@ from src.singleflight import singleflight
 from src.ratelimit import rate_limiter
 from src.mcp_client import MCPUnavailableError, mcp_client
 from services.common.models import ToolCallLog
+from services.common.auth import SingleCredentialAuthMiddleware
 from services.common.telemetry import setup_logging
 
 # Applied before any client is constructed: on a network that inspects TLS the
@@ -64,8 +66,12 @@ class MCPWriteRequest(BaseModel):
     approval_id: str
 
 
-# In-memory structured call logs and metrics
-call_logs: List[ToolCallLog] = []
+# In-memory structured call logs and metrics.
+#
+# Bounded: /logs only ever serves the most recent entries, so an unbounded list
+# was retaining every call for the life of the process to serve a window of 100.
+CALL_LOG_LIMIT = 500
+call_logs: Deque[ToolCallLog] = deque(maxlen=CALL_LOG_LIMIT)
 total_calls_count = 0
 cache_hits_count = 0
 
@@ -93,6 +99,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Every route below is published to the internet by nginx, so the whole app
+# sits behind one operator login. /healthz, /readyz and /auth/login stay open.
+app.add_middleware(SingleCredentialAuthMiddleware)
 
 
 @app.get("/healthz", status_code=status.HTTP_200_OK)
@@ -347,7 +357,7 @@ async def write_mcp_tool(req: MCPWriteRequest) -> MCPCallResponse:
 @app.get("/logs", response_model=List[ToolCallLog])
 async def get_logs(tenant_id: Optional[str] = None, run_id: Optional[str] = None) -> List[ToolCallLog]:
     """Returns structured call logs for compliance audit and UI ledger."""
-    filtered = call_logs
+    filtered = list(call_logs)
     if tenant_id:
         filtered = [l for l in filtered if l.tenant_id == tenant_id]
     if run_id:
@@ -363,6 +373,6 @@ async def get_stats() -> Dict[str, Any]:
         "total_calls": total_calls_count,
         "cache_hits": cache_hits_count,
         "cache_hit_ratio_pct": round(hit_ratio, 1),
-        "active_singleflights": len(singleflight._flights),
+        "active_singleflights": singleflight.in_flight,
         "rate_limiter_tokens": round(rate_limiter.tokens, 2),
     }

@@ -11,6 +11,18 @@ from src.calculator import compute_deterministic_projection, calculate_productio
 from src.db import async_session_factory, init_db
 
 
+def _auth() -> dict:
+    """Bearer header for the single operator credential the services require.
+
+    Every route these tests exercise is published to the internet by nginx and
+    now sits behind one operator login, so the test client signs in the same way
+    the browser does.
+    """
+    from services.common.auth import issue_token
+
+    token, _ = issue_token("supervisor")
+    return {"Authorization": f"Bearer {token}"}
+
 @pytest.mark.asyncio
 async def test_compute_deterministic_projection_degraded():
     """Verify calculation logic when render farm is degraded."""
@@ -91,7 +103,7 @@ async def test_compute_deterministic_projection_zero_throughput_edge_case():
 async def test_api_impact_project_endpoint():
     """Verify /impact/project FastAPI endpoint."""
     await init_db()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         # 1. Health and ready
         res = await client.get("/healthz")
         assert res.status_code == 200
@@ -140,7 +152,7 @@ async def test_api_impact_project_accepts_zoned_as_of():
     returning a 500. Both offset forms are resolved to the same instant.
     """
     await init_db()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         payload = {
             "tenant_id": "t07",
             "affected_workers": ["w-03", "w-07"],
@@ -215,7 +227,7 @@ async def test_untraced_workers_keep_the_production_deadline_and_report_no_delay
 async def test_api_production_sequences_are_counted_from_metadata():
     """Verify /production/sequences derives every figure from the seed."""
     await init_db()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         res = await client.get("/production/sequences")
         assert res.status_code == 200
         rows = res.json()
@@ -243,7 +255,7 @@ async def test_api_reanchor_deadline_moves_every_deliverable():
     measured against.
     """
     await init_db()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         before = await client.get("/deliverables")
         assert before.status_code == 200
         assert len(before.json()) > 0

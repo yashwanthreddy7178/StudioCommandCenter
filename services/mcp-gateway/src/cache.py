@@ -97,9 +97,26 @@ class QuantizedCache:
 
         return None, False, False
 
+    def _sweep(self, now: float) -> None:
+        """Drops entries aged past the stale tolerance.
+
+        Expiry was only ever checked on read, so a key that is never requested
+        again was retained for the life of the process. Query parameters vary
+        per run and are hashed into the key, so those keys accumulate rather
+        than being reused.
+        """
+        cutoff = settings.stale_cache_max_seconds
+        dead = [
+            key for key, (created_at, _, _) in self._memory_cache.items()
+            if now - created_at > cutoff
+        ]
+        for key in dead:
+            del self._memory_cache[key]
+
     async def set(self, cache_key: str, payload: Any, ttl: int) -> None:
         """Stores item in cache with specified TTL."""
         now = time.time()
+        self._sweep(now)
         self._memory_cache[cache_key] = (now, float(ttl), payload)
 
         if self._redis_client:

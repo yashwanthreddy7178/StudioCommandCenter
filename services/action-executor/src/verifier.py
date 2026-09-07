@@ -119,12 +119,6 @@ class RemediationVerifier:
                 )
 
         delay_after = recomputed.get("delay_minutes")
-        recovered = not still_degraded
-        if recovered and delay_minutes_before is not None and delay_after is not None:
-            # Workers healthy but the deadline still missed is a partial result,
-            # not a success. The backlog accumulated during the incident may not
-            # be recoverable by fixing the workers alone.
-            recovered = delay_after <= 0
 
         if still_degraded:
             status = "NOT_RECOVERED"
@@ -141,6 +135,17 @@ class RemediationVerifier:
         else:
             status = "VERIFIED"
             reason = "All workers returned to baseline and the deadline is projected to be met."
+
+        # Derived from the status rather than computed alongside it. The two were
+        # worked out separately under different conditions, so a verification
+        # with no pre-action delay to compare against returned is_recovered=True
+        # next to a status of PARTIALLY_RECOVERED -- the payload contradicting
+        # itself in the one field a caller is most likely to branch on.
+        #
+        # Workers healthy but the deadline still missed is a partial result, not
+        # a success: the backlog accumulated during the incident may not be
+        # recoverable by fixing the workers alone.
+        recovered = status == "VERIFIED"
 
         improvement = None
         if delay_minutes_before is not None and delay_after is not None:

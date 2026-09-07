@@ -49,9 +49,18 @@ def execute_control_action(tenant_id: str, action_type: str, parameters: Dict[st
 
     elif action_type == ActionType.SCALE_RENDER_WORKERS.value:
         add_workers = int(parameters.get("additional_workers", 4))
-        current_len = len(world.workers)
+        # Numbered from the highest id in use, not from the worker count. With a
+        # count, draining or removing a worker lowers it and the next scale-up
+        # regenerates an id that already exists, overwriting a live worker
+        # instead of adding one.
+        highest = 0
+        for existing_id in world.workers:
+            _, _, suffix = existing_id.rpartition("-")
+            if suffix.isdigit():
+                highest = max(highest, int(suffix))
+
         for i in range(1, add_workers + 1):
-            new_id = f"w-{current_len + i:02d}"
+            new_id = f"w-{highest + i:02d}"
             # Add healthy RTX 4090
             from src.models import RenderWorkerNode
             world.workers[new_id] = RenderWorkerNode(
@@ -73,13 +82,42 @@ def execute_control_action(tenant_id: str, action_type: str, parameters: Dict[st
         }
 
     elif action_type == ActionType.REPRIORITIZE_QUEUE.value:
-        priority_sequence = str(parameters.get("priority_sequence", "Final Chase"))
+        # The planner sends `priority_sequences`, a list taken from the impact
+        # projection. This read `priority_sequence` -- singular -- so it never
+        # matched, silently fell back to a hardcoded "Final Chase", and reported
+        # that name back whatever the projection had actually flagged. The
+        # singular spelling is still accepted so an older caller keeps working.
+        sequences = parameters.get("priority_sequences")
+        if isinstance(sequences, str):
+            sequences = [sequences]
+        if not sequences:
+            single = parameters.get("priority_sequence")
+            sequences = [str(single)] if single else []
+        sequences = [str(name) for name in sequences if str(name).strip()]
+
+        if not sequences:
+            return {
+                "status": "FAILED",
+                "action": action_type,
+                "tenant_id": tenant_id,
+                "error": "No sequences given to prioritize",
+            }
+
+        # Recorded on the world rather than only described in the response: this
+        # branch used to return APPLIED without touching anything.
+        world.priority_sequences = sequences
         return {
             "status": "APPLIED",
             "action": action_type,
             "tenant_id": tenant_id,
-            "priority_sequence": priority_sequence,
-            "message": f"Queue reprioritized to prioritize sequence '{priority_sequence}'",
+            "priority_sequences": sequences,
+            # Says what actually changed. Reordering the queue moves these shots
+            # ahead of the rest; it adds no capacity, so fleet throughput is
+            # unchanged and claiming otherwise would not be substantiable.
+            "message": (
+                f"Queue reordered to drain {', '.join(sequences)} first. "
+                "Fleet throughput is unchanged; the remaining sequences move behind."
+            ),
         }
 
     else:

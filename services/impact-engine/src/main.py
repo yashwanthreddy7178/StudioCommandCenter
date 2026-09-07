@@ -16,6 +16,7 @@ from src.schema import Deliverable, Production, Scene, Sequence, Shot
 from src.calculator import calculate_production_impact
 from services.common.models import ImpactProjection, UtcDatetime
 from services.common.timeutil import to_naive_utc, to_utc, utc_now
+from services.common.auth import SingleCredentialAuthMiddleware
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("impact-engine")
@@ -56,6 +57,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Every route below is published to the internet by nginx, so the whole app
+# sits behind one operator login. /healthz, /readyz and /auth/login stay open.
+app.add_middleware(SingleCredentialAuthMiddleware)
 
 
 @app.get("/healthz", status_code=status.HTTP_200_OK)

@@ -13,6 +13,16 @@ class AuditStore:
     """Manages idempotent approvals and immutable audit records."""
 
     def __init__(self) -> None:
+        # Deliberately unbounded, unlike the gateway's call log. Both grow with
+        # use, but a call log is telemetry and an audit record is the evidence
+        # that a human approved a change to production. Capping this would
+        # silently discard the oldest approvals, which is a worse failure than
+        # the memory it saves: one approval is a few hundred bytes, and the
+        # service is pinned to one instance and restarted on deploy.
+        #
+        # The real fix is to persist these rather than to bound them. Both live
+        # only in this process, so a restart loses the trail and the idempotency
+        # keys guarding against double execution along with it.
         self._approvals: Dict[str, ApprovalRecord] = {} # idempotency_key -> ApprovalRecord
         self._audit_log: List[AuditRecord] = []
         self._lock = asyncio.Lock()

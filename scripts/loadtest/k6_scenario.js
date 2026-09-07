@@ -31,17 +31,41 @@ export const options = {
 
 const BASE_URL = __ENV.API_GATEWAY_URL || 'http://localhost:8000';
 const MCP_URL = __ENV.MCP_GATEWAY_URL || 'http://localhost:8001';
+const USERNAME = __ENV.APP_USERNAME || 'supervisor';
+const PASSWORD = __ENV.APP_PASSWORD || 'shadow-protocol';
 
-export default function () {
+// Every service route is behind the operator login, so the run signs in once and
+// every VU reuses the token. Without this the whole scenario measures nothing but
+// the 401 path.
+export function setup() {
+  const res = http.post(
+    `${BASE_URL}/auth/login`,
+    JSON.stringify({ username: USERNAME, password: PASSWORD }),
+    { headers: { 'Content-Type': 'application/json' } }
+  );
+  if (res.status !== 200) {
+    throw new Error(
+      `Sign in failed (HTTP ${res.status}). Set APP_USERNAME and APP_PASSWORD to ` +
+      'match the deployment before running the load test.'
+    );
+  }
+  return { token: JSON.parse(res.body).token };
+}
+
+export default function (data) {
   const vuId = __VU;
   const sessionId = `sess-loadtest-vu-${vuId}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${data.token}`,
+  };
 
   // 1. Acquire Tenant Lease
   const leaseStart = Date.now();
   const leaseRes = http.post(
     `${BASE_URL}/leases/acquire`,
     JSON.stringify({ session_id: sessionId, user_id: `usr-loadtest-${vuId}` }),
-    { headers: { 'Content-Type': 'application/json' } }
+    { headers: headers }
   );
   leaseAcquireDuration.add(Date.now() - leaseStart);
 
@@ -63,7 +87,7 @@ export default function () {
       user_id: `usr-loadtest-${vuId}`,
       objective: 'Will Shadow Protocol miss the 18:00 delivery deadline?',
     }),
-    { headers: { 'Content-Type': 'application/json' } }
+    { headers: headers }
   );
   runCreationDuration.add(Date.now() - runStart);
 
@@ -88,7 +112,7 @@ export default function () {
         parameters: tool.parameters,
         tenant_id: tenantId,
       }),
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: headers }
     );
 
     mcpCallsCounter.add(1);
@@ -103,7 +127,7 @@ export default function () {
   http.post(
     `${BASE_URL}/leases/heartbeat`,
     JSON.stringify({ tenant_id: tenantId, session_id: sessionId }),
-    { headers: { 'Content-Type': 'application/json' } }
+    { headers: headers }
   );
 
   sleep(1.0);

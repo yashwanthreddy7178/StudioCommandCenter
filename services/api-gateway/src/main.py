@@ -10,6 +10,11 @@ from pydantic import BaseModel, Field
 from src.config import settings
 from src.lease import lease_manager
 from services.common.models import ApprovalRequest, RunDocument, TenantLease
+from services.common.auth import (
+    SingleCredentialAuthMiddleware,
+    check_credentials,
+    issue_token,
+)
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("api-gateway")
@@ -24,14 +29,44 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     # Wildcard origin with credentials is rejected outright by browsers, and
-    # nothing needs it: auth is a JWT bearer token set on the request, not a
-    # cookie the browser attaches on its own.
+    # nothing needs it: auth is a signed bearer token the app sets on the
+    # request, not a cookie the browser attaches on its own.
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Every route below is published to the internet by nginx, so the whole app
+# sits behind one operator login. /healthz, /readyz and /auth/login stay open.
+app.add_middleware(SingleCredentialAuthMiddleware)
+
 http_client = httpx.AsyncClient(timeout=10.0)
+
+
+class LoginRequest(BaseModel):
+    """The single operator credential."""
+    username: str
+    password: str
+
+
+@app.post("/auth/login", response_model=Dict[str, Any])
+async def login(req: LoginRequest) -> Dict[str, Any]:
+    """Exchanges the operator credential for a signed token.
+
+    One shared login, not a user system: there is one username and one password,
+    and this hands back a token proving they were presented. Deliberately vague
+    on failure -- saying which half was wrong would let the username be probed.
+    """
+    if not check_credentials(req.username, req.password):
+        logger.warning("Rejected login attempt", extra={"username": req.username[:64]})
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password.",
+        )
+
+    token, expires_at = issue_token(req.username)
+    logger.info("Operator signed in", extra={"username": req.username})
+    return {"token": token, "expires_at": expires_at}
 
 
 class LeaseAcquireRequest(BaseModel):
@@ -106,9 +141,27 @@ async def list_leases() -> List[TenantLease]:
 # Investigation Run Endpoints
 # ---------------------------------------------------------------------------
 
+async def _require_lease(tenant_id: str, session_id: str) -> None:
+    """Refuses an action on a tenant this session does not hold.
+
+    The tenant id arrives in the request body, so without this a caller could
+    name any tenant and act on a world leased by someone else. It matters most
+    on the approval route, which executes a real remediation.
+    """
+    if not await lease_manager.holds_lease(tenant_id, session_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Session does not hold a live lease on tenant '{tenant_id}'. "
+                "Acquire a lease before acting on a tenant world."
+            ),
+        )
+
+
 @app.post("/runs", response_model=Dict[str, Any])
 async def create_run(req: CreateRunRequest) -> Dict[str, Any]:
     """Creates an investigation run and dispatches to agent-worker."""
+    await _require_lease(req.tenant_id, req.session_id)
     run_id = f"run-{uuid.uuid4().hex[:8]}"
 
     # Dispatch to agent-worker
@@ -142,18 +195,39 @@ async def create_run(req: CreateRunRequest) -> Dict[str, Any]:
 
 @app.get("/runs/{run_id}", response_model=Dict[str, Any])
 async def get_run(run_id: str) -> Dict[str, Any]:
-    """Proxies run status lookup to agent-worker."""
+    """Proxies run status lookup to agent-worker.
+
+    A missing run and an unreachable worker are different answers, and this
+    reported both as 404: an agent-worker that was down looked exactly like a run
+    that never existed, which is the wrong thing to tell a client polling for a
+    run it just created.
+    """
     try:
         res = await http_client.get(f"{settings.agent_worker_url}/runs/{run_id}")
-        res.raise_for_status()
-        return res.json()
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run '{run_id}' not found")
+        logger.error("Run lookup failed", extra={"run_id": run_id, "error": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"agent-worker is unreachable, run status unknown: {str(exc)[:200]}",
+        )
+
+    if res.status_code == status.HTTP_404_NOT_FOUND:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Run '{run_id}' not found"
+        )
+    if res.status_code >= 500:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"agent-worker failed to return run '{run_id}'",
+        )
+    return res.json()
 
 
 @app.post("/runs/{run_id}/approve", response_model=Dict[str, Any])
 async def approve_run_action(run_id: str, req: ApprovalRequest) -> Dict[str, Any]:
     """Intake endpoint for human approval of a remediation option."""
+    await _require_lease(req.tenant_id, req.session_id)
+
     # Look up run to get the selected option details
     try:
         run_res = await http_client.get(f"{settings.agent_worker_url}/runs/{run_id}")

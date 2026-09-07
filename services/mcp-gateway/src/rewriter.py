@@ -1,11 +1,18 @@
 """Server-side tenant matcher injection for PromQL, LogQL, and Tempo trace queries.
 
 Guarantees tenant isolation at the gateway layer regardless of model prompt generation.
+
+The queries arriving here are written by a model, and a model reading telemetry
+is reading attacker-influencable text. So the matcher is never assumed to be
+present because the query says it is: every function below masks string literals,
+strips any tenant matcher it finds outside them, and injects its own. A query
+that carries `tenant_id="t07"` inside a quoted string is left holding an inert
+string and still gets a real matcher.
 """
 from __future__ import annotations
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 
 # Clause keywords whose parenthesised argument lists contain label names, not
@@ -29,9 +36,76 @@ _PROMQL_RESERVED = {
 
 _BRACE_SPAN = re.compile(r"\{[^{}]*\}")
 
-_STRING_LITERAL = re.compile(r'"[^"]*"|\'[^\']*\'')
+# Every string form the query languages accept, so no matcher-shaped text inside
+# a quoted span is ever read as a matcher. Backticks matter as much as quotes:
+# PromQL and LogQL both accept them, and a backticked string needs no escaping,
+# which is exactly what made `up{note=` + backtick + 'tenant_id="t07"' readable
+# as an existing matcher.
+_STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|`[^`]*`')
 _BRACED_SELECTOR = re.compile(r"([a-zA-Z_:][a-zA-Z0-9_:]*)?\s*\{([^}]*)\}")
 _IDENTIFIER = re.compile(r"\b[a-zA-Z_:][a-zA-Z0-9_:]*\b")
+
+# A placeholder standing in for a masked span, used to recognise a tenant matcher
+# whose value has already been masked away.
+_MASKED = r"\x00\d+\x00"
+
+# A tenant matcher in selector position, with the surrounding comma so removing
+# it does not leave `{, foo="x"}` behind. Matches only a masked value, so the
+# label name has to sit outside a string to be stripped.
+_PROMQL_TENANT_MATCHER = re.compile(
+    r"\s*,?\s*\btenant_id\s*(?:=~|!~|!=|=)\s*" + _MASKED + r"\s*,?"
+)
+
+# The same in a LogQL pipeline, where the matcher is a label-filter stage.
+_LOGQL_TENANT_STAGE = re.compile(
+    r"\|\s*tenant_id\s*(?:=~|!~|!=|=)\s*" + _MASKED
+)
+
+# The same in TraceQL, where it is a comparison joined by && into the filter.
+_TRACEQL_TENANT_TERM = re.compile(
+    r"(?:span\.|resource\.|\.)?\btenant_id\s*(?:=~|!~|!=|=)\s*" + _MASKED
+    + r"\s*(?:&&|\|\|)?"
+)
+
+
+class _Masker:
+    """Replaces spans with opaque keys and puts them back afterwards.
+
+    Keys are digits between NUL bytes so they cannot themselves match an
+    identifier and be rewritten as metric names.
+    """
+
+    def __init__(self) -> None:
+        self._spans: List[Tuple[str, str]] = []
+
+    def mask(self, pattern: re.Pattern, text: str) -> str:
+        def store(match: re.Match[str]) -> str:
+            key = f"\x00{len(self._spans)}\x00"
+            self._spans.append((key, match.group(0)))
+            return key
+        return pattern.sub(store, text)
+
+    def restore(self, text: str) -> str:
+        # Outermost spans first: a masked brace span holds the placeholder of any
+        # string nested inside it, so a single forward pass would leave the inner
+        # key stranded in the output.
+        for key, original in reversed(self._spans):
+            text = text.replace(key, original)
+        while "\x00" in text:
+            before = text
+            for key, original in self._spans:
+                text = text.replace(key, original)
+            if text == before:
+                break
+        return text
+
+
+def _tidy_selectors(text: str) -> str:
+    """Cleans up the punctuation left behind by removing a matcher."""
+    text = re.sub(r"\{\s*,\s*", "{", text)
+    text = re.sub(r"\s*,\s*\}", "}", text)
+    text = re.sub(r",\s*,", ",", text)
+    return text
 
 
 def inject_tenant_promql(query: str, tenant_id: str) -> str:
@@ -43,28 +117,25 @@ def inject_tenant_promql(query: str, tenant_id: str) -> str:
     are not function calls, not operators, and not inside a grouping clause, so
     `avg(m) by (renderer_version)` constrains `m` and leaves the grouping label
     untouched.
+
+    Any tenant matcher already in the expression is removed before ours is added,
+    so the result is the same whether the model supplied one, supplied a
+    different tenant's, or supplied none. Re-injecting is therefore idempotent.
     """
     if not query or not tenant_id:
         return query
 
-    if f'tenant_id="{tenant_id}"' in query:
-        return query
-
     matcher = f'tenant_id="{tenant_id}"'
-    placeholders: Dict[str, str] = {}
-
-    def _mask(pattern: re.Pattern, text: str) -> str:
-        # Keys are digits between NUL bytes so they cannot themselves match the
-        # identifier pattern and be rewritten as metric names.
-        def store(match: re.Match[str]) -> str:
-            key = f"\x00{len(placeholders)}\x00"
-            placeholders[key] = match.group(0)
-            return key
-        return pattern.sub(store, text)
+    masker = _Masker()
 
     # Mask spans that must never be rewritten, innermost concern first.
-    masked = _mask(_STRING_LITERAL, query)
-    masked = _mask(_GROUPING_CLAUSE, masked)
+    masked = masker.mask(_STRING_LITERAL, query)
+
+    # Drop any tenant matcher the caller supplied. Its value is masked by now, so
+    # only a real matcher outside a string can match here.
+    masked = _tidy_selectors(_PROMQL_TENANT_MATCHER.sub("", masked))
+
+    masked = masker.mask(_GROUPING_CLAUSE, masked)
 
     # Selectors that already carry a label set: add the matcher inside the braces.
     def add_to_braces(match: re.Match[str]) -> str:
@@ -76,7 +147,7 @@ def inject_tenant_promql(query: str, tenant_id: str) -> str:
 
     # Mask every label set, including the ones just written, so the identifier
     # pass below cannot descend into them and rewrite label names as metrics.
-    masked = _mask(_BRACE_SPAN, masked)
+    masked = masker.mask(_BRACE_SPAN, masked)
 
     # Remaining bare identifiers denote metrics and get a fresh label set.
     def add_to_bare(match: re.Match[str]) -> str:
@@ -94,19 +165,7 @@ def inject_tenant_promql(query: str, tenant_id: str) -> str:
         return f"{name}{{{matcher}}}"
 
     masked = _IDENTIFIER.sub(add_to_bare, masked)
-
-    # Restore outermost spans first: a masked brace span holds the placeholder of
-    # any string literal nested inside it, so a single forward pass would leave
-    # the inner key stranded in the output.
-    for key in reversed(list(placeholders)):
-        masked = masked.replace(key, placeholders[key])
-    while "\x00" in masked:
-        before = masked
-        for key, original in placeholders.items():
-            masked = masked.replace(key, original)
-        if masked == before:
-            break
-    return masked
+    return masker.restore(masked)
 
 
 # A bare metric selector, optionally with a label set: the shape the agent's
@@ -143,25 +202,33 @@ def inject_tenant_logql(query: str, tenant_id: str) -> str:
     stream labels, so `tenant_id` has to be applied as a pipeline label filter.
     Adding it inside the stream selector instead matches no stream at all, which
     silently returns an empty result rather than an isolated one.
+
+    As in the PromQL case, any tenant filter already present is stripped first,
+    so a filter the model wrote cannot stand in for the one the gateway owes.
     """
     if not query or not tenant_id:
         return query
 
-    if f'tenant_id="{tenant_id}"' in query:
-        return query
+    masker = _Masker()
+    masked = masker.mask(_STRING_LITERAL, query)
+    masked = _LOGQL_TENANT_STAGE.sub("", masked)
+    # Removing a stage leaves its surrounding whitespace behind, and the insert
+    # below adds its own. Without collapsing, re-injecting the same query grows a
+    # space each time and the round-trip is no longer stable. Safe here because
+    # every string literal is masked, so no run of spaces inside one is touched.
+    masked = re.sub(r"\s+", " ", masked).strip()
 
     tenant_filter = f'| tenant_id="{tenant_id}"'
 
     # The label filter belongs immediately after the stream selector, before any
     # line filters already present in the pipeline.
-    closing = query.find("}")
-    if query.lstrip().startswith("{") and closing != -1:
-        head, tail = query[: closing + 1], query[closing + 1:]
-        return f"{head} {tenant_filter}{tail}".rstrip()
+    closing = masked.find("}")
+    if masked.lstrip().startswith("{") and closing != -1:
+        head, tail = masked[: closing + 1], masked[closing + 1:]
+        return masker.restore(f"{head} {tenant_filter}{tail}".rstrip())
 
     # A bare pipeline with no stream selector cannot be safely constrained.
-    return f'{{tenant_id="{tenant_id}"}} {query}'.strip()
-
+    return masker.restore(f'{{tenant_id="{tenant_id}"}} {masked}'.strip())
 
 
 def inject_tenant_traceql(query: str, tenant_id: str) -> str:
@@ -173,16 +240,25 @@ def inject_tenant_traceql(query: str, tenant_id: str) -> str:
 
     Only the first brace group is rewritten, so a query that continues into an
     aggregate such as `{ ... } | count() > 2` keeps its pipeline intact.
+
+    A tenant term already in the filter is removed rather than trusted. The
+    previous check accepted the bare substring `tenant_id` anywhere in the query,
+    so `{ name = "tenant_id" }` skipped injection entirely and read every
+    tenant's spans.
     """
     if not query or not tenant_id:
         return query
 
     matcher = f'span.tenant_id = "{tenant_id}"'
-    if "tenant_id" in query:
-        # Already constrained; injecting again would duplicate the matcher.
-        return query
 
-    match = re.match(r"\s*\{([^}]*)\}(.*)$", query, re.DOTALL)
+    masker = _Masker()
+    masked = masker.mask(_STRING_LITERAL, query)
+    masked = _TRACEQL_TENANT_TERM.sub("", masked)
+    # Remove a && or || left dangling where a term used to be.
+    masked = re.sub(r"\{\s*(?:&&|\|\|)\s*", "{ ", masked)
+    masked = re.sub(r"\s*(?:&&|\|\|)\s*\}", " }", masked)
+
+    match = re.match(r"\s*\{([^}]*)\}(.*)$", masked, re.DOTALL)
     if not match:
         # No selector to extend, so the tenant matcher becomes the whole filter.
         return "{ " + matcher + " }"
@@ -190,8 +266,8 @@ def inject_tenant_traceql(query: str, tenant_id: str) -> str:
     inner = match.group(1).strip()
     tail = match.group(2)
     if inner:
-        return "{ " + matcher + " && " + inner + " }" + tail
-    return "{ " + matcher + " }" + tail
+        return masker.restore("{ " + matcher + " && " + inner + " }" + tail)
+    return masker.restore("{ " + matcher + " }" + tail)
 
 
 def rewrite_tool_parameters(tool_name: str, params: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:

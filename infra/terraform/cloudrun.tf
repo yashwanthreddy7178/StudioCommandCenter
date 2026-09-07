@@ -1,4 +1,24 @@
 # Cloud Run Services for Studio Production Commander
+#
+# Every service below is pinned to a single instance, and that is a constraint
+# of the code rather than a cost decision. The state these services keep is
+# in-process, not shared:
+#
+#   api-gateway      tenant leases        (src/lease.py, a dict)
+#   action-executor  approvals and the idempotency keys guarding them
+#   mcp-gateway      response cache, singleflight, token-bucket rate limiter
+#   render-sim       the 24 simulated tenant worlds themselves
+#   impact-engine    SQLite, in-memory by default
+#
+# A second replica does not share any of it. Two instances would lease the same
+# tenant to two sessions, execute one approved remediation twice because the
+# idempotency key lives on the other instance, and rate-limit against Grafana at
+# twice the intended ceiling. Raising these numbers means moving that state to
+# Redis, Firestore and Postgres first -- the Redis and SQL resources alongside
+# this file exist for exactly that, and the code does not use them yet.
+#
+# deploy/cloud-run-deploy.sh ships the whole stack as one container pinned the
+# same way; this file describes the split topology.
 
 # 1. API Gateway
 resource "google_cloud_run_v2_service" "api_gateway" {
@@ -9,7 +29,7 @@ resource "google_cloud_run_v2_service" "api_gateway" {
   template {
     scaling {
       min_instance_count = 1
-      max_instance_count = 20
+      max_instance_count = 1 # see the note at the top of this file
     }
     max_instance_request_concurrency = 80
 
@@ -37,7 +57,7 @@ resource "google_cloud_run_v2_service" "stream_service" {
   template {
     scaling {
       min_instance_count = 1
-      max_instance_count = 10
+      max_instance_count = 1 # see the note at the top of this file
     }
     max_instance_request_concurrency = 250
 
@@ -65,7 +85,7 @@ resource "google_cloud_run_v2_service" "agent_worker" {
   template {
     scaling {
       min_instance_count = 1
-      max_instance_count = 25
+      max_instance_count = 1 # see the note at the top of this file
     }
     max_instance_request_concurrency = 4
 
@@ -93,7 +113,7 @@ resource "google_cloud_run_v2_service" "mcp_gateway" {
   template {
     scaling {
       min_instance_count = 1
-      max_instance_count = 8
+      max_instance_count = 1 # see the note at the top of this file
     }
     max_instance_request_concurrency = 60
 
@@ -121,7 +141,7 @@ resource "google_cloud_run_v2_service" "impact_engine" {
   template {
     scaling {
       min_instance_count = 1
-      max_instance_count = 10
+      max_instance_count = 1 # see the note at the top of this file
     }
     max_instance_request_concurrency = 80
 
@@ -149,7 +169,7 @@ resource "google_cloud_run_v2_service" "action_executor" {
   template {
     scaling {
       min_instance_count = 1
-      max_instance_count = 4
+      max_instance_count = 1 # see the note at the top of this file
     }
     max_instance_request_concurrency = 20
 
@@ -177,7 +197,7 @@ resource "google_cloud_run_v2_service" "render_sim" {
   template {
     scaling {
       min_instance_count = 1 # Always warm
-      max_instance_count = 2
+      max_instance_count = 1 # see the note at the top of this file
     }
     max_instance_request_concurrency = 80
 

@@ -8,6 +8,7 @@ or by a constant.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from services.common.models import (
@@ -28,6 +29,15 @@ from services.common.analysis import (
 # GPU utilisation below this while duration is elevated indicates the workers are
 # stalling on memory rather than saturating compute.
 STALLED_GPU_UTILISATION = 0.60
+
+# Fraction of measured child-span time that must sit in the render span before
+# the latency is attributed to render execution rather than storage or the API.
+RENDER_SPAN_DOMINANCE = 0.5
+
+
+def _utc_text(epoch: float) -> str:
+    """Formats an epoch timestamp for an evidence snippet."""
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
 
 
 def _series(evidence: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -60,6 +70,108 @@ def _find_by_tool(evidence_ledger: List[Dict[str, Any]], tool_name: str) -> Opti
         if entry.get("tool_name") == tool_name:
             return entry
     return None
+
+
+def _epoch_seconds(value: Any) -> Optional[float]:
+    """Reads a timestamp as epoch seconds from the forms Loki and OTLP emit.
+
+    Loki returns nanosecond epochs as strings, the exporter writes ISO-8601, and
+    a bare line may carry either. Magnitude tells nanoseconds from microseconds
+    from seconds without needing to know which producer it came from.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        text = value.strip().strip('"')
+        if not text:
+            return None
+        try:
+            number = float(text)
+        except ValueError:
+            try:
+                return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return None
+    else:
+        return None
+
+    # Seconds since the epoch are ~1.8e9 now; anything far larger is a smaller unit.
+    for divisor in (1.0, 1e3, 1e6, 1e9):
+        scaled = number / divisor
+        if 1e8 < scaled < 1e11:
+            return scaled
+    return None
+
+
+def _log_timestamp(entry: Dict[str, Any]) -> Optional[float]:
+    """Extracts the time a log line was written, in epoch seconds.
+
+    Loki's own shape nests [timestamp, line] pairs under `values`; the gateway
+    may instead hand back flat records carrying `timestamp`. Both are read here
+    rather than assuming one, and an unreadable time returns None so the caller
+    can say so instead of guessing.
+    """
+    raw = entry.get("raw_data")
+    candidates: List[Any] = []
+
+    def walk(node: Any, depth: int = 0) -> None:
+        if depth > 4:
+            return
+        if isinstance(node, dict):
+            for key in ("timestamp", "ts", "time", "epoch"):
+                if key in node:
+                    candidates.append(node[key])
+            for nested in node.values():
+                walk(nested, depth + 1)
+        elif isinstance(node, list):
+            # Loki: values is a list of [ns_timestamp, line] pairs.
+            if len(node) == 2 and isinstance(node[1], str) and not isinstance(node[0], (dict, list)):
+                candidates.append(node[0])
+            for nested in node:
+                walk(nested, depth + 1)
+
+    walk(raw)
+    times = [t for t in (_epoch_seconds(c) for c in candidates) if t is not None]
+    return max(times) if times else None
+
+
+def _sample_timestamp(series: List[Dict[str, Any]]) -> Optional[float]:
+    """The instant at which an instant-query sample was taken, in epoch seconds."""
+    times = []
+    for item in series:
+        value = item.get("value")
+        if isinstance(value, list) and value:
+            stamp = _epoch_seconds(value[0])
+            if stamp is not None:
+                times.append(stamp)
+    return max(times) if times else None
+
+
+def _span_durations(traces: Any) -> Dict[str, float]:
+    """Totals span duration by span name, in seconds, across returned traces."""
+    totals: Dict[str, float] = {}
+
+    def walk(node: Any, depth: int = 0) -> None:
+        if depth > 6:
+            return
+        if isinstance(node, dict):
+            name = node.get("name")
+            nanos = node.get("durationNanos", node.get("durationNanos".lower()))
+            if isinstance(name, str) and nanos is not None:
+                try:
+                    totals[name] = totals.get(name, 0.0) + float(nanos) / 1e9
+                except (TypeError, ValueError):
+                    pass
+            for nested in node.values():
+                walk(nested, depth + 1)
+        elif isinstance(node, list):
+            for nested in node:
+                walk(nested, depth + 1)
+
+    walk(traces)
+    return totals
 
 
 def _fail(test_id: str, name: str, description: str, source: str, reason: str) -> FalsifiableTestResult:
@@ -238,7 +350,24 @@ def _test_control_group(ledger: List[Dict[str, Any]]) -> FalsifiableTestResult:
     if not control:
         return _fail(*meta, "Every worker is degraded, so there is no control group left to compare.")
 
-    spread = max(control.values()) / min(control.values()) if min(control.values()) > 0 else 0.0
+    # A zero or negative reading is not a fast worker, it is a worker that did
+    # not report. Falling back to a spread of 0.0 made that read as the tightest
+    # possible band and passed the test, so an unusable control group was
+    # reported as evidence that the fleet was stable.
+    slowest, fastest = max(control.values()), min(control.values())
+    if fastest <= 0:
+        unusable = sorted(w for w, v in control.items() if v <= 0)
+        return FalsifiableTestResult(
+            test_id=meta[0], name=meta[1], description=meta[2], passed=False,
+            evidence_source=meta[3],
+            evidence_snippet=f"control workers reporting no duration: {', '.join(unusable)}",
+            explanation=(
+                "Part of the control group reported a duration of zero, which is a missing "
+                "reading rather than a fast one, so fleet-wide causes cannot be ruled out."
+            ),
+        )
+
+    spread = slowest / fastest
     stable = spread < DEGRADATION_FACTOR
     return FalsifiableTestResult(
         test_id=meta[0], name=meta[1], description=meta[2], passed=stable,
@@ -277,13 +406,72 @@ def _test_temporal_precedence(ledger: List[Dict[str, Any]]) -> FalsifiableTestRe
         (line for line in text.splitlines() if "renderer_config_loaded" in line),
         text[:180],
     )
+
+    # The presence of the line used to be the whole test, so a change recorded
+    # after the degradation -- or at any time at all -- passed as evidence that
+    # it came first. Precedence is a claim about time and has to read one.
+    changed_at = _log_timestamp(entry)
+    if changed_at is None:
+        return _fail(
+            *meta,
+            "A configuration-change line was found but carried no readable timestamp, "
+            "so it cannot be placed before the degradation in time.",
+        )
+
+    dur_entry = _find(ledger, "render_worker_frame_duration_seconds")
+    if not dur_entry:
+        return _fail(
+            *meta,
+            "Frame duration was never queried, so there is no degradation for the "
+            "configuration change to precede.",
+        )
+
+    series = _series(dur_entry)
+    durations = _by_worker(series)
+    _, degraded = split_degraded({w: v for w, (v, _) in durations.items()})
+    if not degraded:
+        return FalsifiableTestResult(
+            test_id=meta[0], name=meta[1], description=meta[2], passed=False,
+            evidence_source=meta[3],
+            evidence_snippet=snippet[:180],
+            explanation=(
+                "A configuration change was recorded, but no worker is degraded, so there "
+                "is no degradation for it to precede."
+            ),
+        )
+
+    observed_at = _sample_timestamp(series)
+    if observed_at is None:
+        return _fail(
+            *meta,
+            "The frame duration samples carried no timestamp, so the change cannot be "
+            "ordered against the degraded reading.",
+        )
+
+    if changed_at > observed_at:
+        return FalsifiableTestResult(
+            test_id=meta[0], name=meta[1], description=meta[2], passed=False,
+            evidence_source=meta[3],
+            evidence_snippet=(
+                f"change at {_utc_text(changed_at)} is after the degraded reading at "
+                f"{_utc_text(observed_at)}"
+            ),
+            explanation=(
+                "The configuration change was recorded after the degraded measurement, so it "
+                "cannot be its cause on this evidence."
+            ),
+        )
+
     return FalsifiableTestResult(
         test_id=meta[0], name=meta[1], description=meta[2], passed=True,
         evidence_source=meta[3],
-        evidence_snippet=snippet[:180],
+        evidence_snippet=(
+            f"change at {_utc_text(changed_at)} precedes the degraded reading at "
+            f"{_utc_text(observed_at)}: {snippet[:110]}"
+        ),
         explanation=(
-            "A configuration-change line was recorded, establishing when the renderer version "
-            "changed independently of the metric inflection."
+            "The renderer configuration changed before the degraded frame duration was "
+            "measured, so the change precedes the degradation it is suspected of causing."
         ),
     )
 
@@ -324,11 +512,47 @@ def _test_trace_attribution(
     if not traces:
         return _fail(*meta, "The trace search returned no spans for this window.")
 
+    # Returning any spans at all used to pass, with an explanation claiming the
+    # latency had been attributed to render execution. Attribution is a
+    # comparison between the child spans, so it has to make one.
+    durations = _span_durations(traces)
+    if not durations:
+        return _fail(
+            *meta,
+            "Spans were returned but carried no readable durations, so the latency "
+            "cannot be attributed to a stage.",
+        )
+
+    total = sum(durations.values())
+    if total <= 0:
+        return _fail(*meta, "The returned spans total zero duration, so nothing can be attributed.")
+
+    render_seconds = sum(v for name, v in durations.items() if "render" in name.lower())
+    share = render_seconds / total
+    breakdown = ", ".join(
+        f"{name}={value:.1f}s" for name, value in sorted(durations.items(), key=lambda kv: -kv[1])
+    )
+
+    if share < RENDER_SPAN_DOMINANCE:
+        return FalsifiableTestResult(
+            test_id=meta[0], name=meta[1], description=meta[2], passed=False,
+            evidence_source=meta[3],
+            evidence_snippet=breakdown[:180],
+            explanation=(
+                f"Render execution accounts for only {share:.0%} of measured span time, so the "
+                "latency is not attributable to rendering; storage or the control API cannot "
+                "be excluded."
+            ),
+        )
+
     return FalsifiableTestResult(
         test_id=meta[0], name=meta[1], description=meta[2], passed=True,
         evidence_source=meta[3],
-        evidence_snippet=str(traces)[:180],
-        explanation="Trace spans were returned and attribute the latency to render execution.",
+        evidence_snippet=breakdown[:180],
+        explanation=(
+            f"Render execution accounts for {share:.0%} of measured span time, which places the "
+            "latency inside the render stage rather than in asset fetch or output write."
+        ),
     )
 
 
@@ -379,6 +603,10 @@ def _medium_threshold(total: int) -> int:
 def evaluate_falsifiable_hypotheses(
     evidence_ledger: List[Dict[str, Any]],
     suspected_cause: str = "Renderer tile_size regression causing GPU VRAM thrashing",
+    # Defaults to skipping the trace criterion rather than failing it: a caller
+    # that does not say whether trace search exists should not have the score
+    # penalised for a tool that may not be there. The planner always passes the
+    # real setting.
     tempo_available: bool = False,
 ) -> HypothesisScorecard:
     """Scores the falsifiable tests that apply against the evidence gathered.

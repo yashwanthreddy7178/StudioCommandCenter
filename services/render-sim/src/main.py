@@ -9,6 +9,7 @@ from src.config import settings
 from src.engine import engine
 from src.control import execute_control_action
 from src.models import ControlActionRequest, IncidentTriggerRequest
+from services.common.auth import SingleCredentialAuthMiddleware
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("render-sim-api")
@@ -36,6 +37,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Every route below is published to the internet by nginx, so the whole app
+# sits behind one operator login. /healthz, /readyz and /auth/login stay open.
+app.add_middleware(SingleCredentialAuthMiddleware)
 
 
 @app.get("/healthz", status_code=status.HTTP_200_OK)

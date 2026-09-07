@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { TenantLease } from '../types/api';
+import { apiFetch } from '../lib/auth';
 
 export function useTenantLease() {
   const [lease, setLease] = useState<TenantLease | null>(null);
@@ -22,7 +23,7 @@ export function useTenantLease() {
     const sessionId = getSessionId();
 
     try {
-      const res = await fetch('/api/gateway/leases/acquire', {
+      const res = await apiFetch('/api/gateway/leases/acquire', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, user_id: 'usr-supervisor' }),
@@ -47,7 +48,7 @@ export function useTenantLease() {
 
     const interval = setInterval(async () => {
       try {
-        await fetch('/api/gateway/leases/heartbeat', {
+        await apiFetch('/api/gateway/leases/heartbeat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tenant_id: lease.tenant_id, session_id: lease.session_id }),

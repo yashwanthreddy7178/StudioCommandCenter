@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Activity } from 'lucide-react';
+import { apiFetch } from '../lib/auth';
 
 export const AgentMetrics: React.FC = () => {
   const [stats, setStats] = useState({
@@ -12,7 +13,7 @@ export const AgentMetrics: React.FC = () => {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const res = await fetch('/api/mcp/stats');
+        const res = await apiFetch('/api/mcp/stats');
         if (res.ok) {
           const data = await res.json();
           setStats((prev) => ({

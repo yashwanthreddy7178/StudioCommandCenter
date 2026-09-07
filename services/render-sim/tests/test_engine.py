@@ -13,10 +13,22 @@ from src.world import TenantProductionWorld
 from services.common.models import ActionType
 
 
+def _auth() -> dict:
+    """Bearer header for the single operator credential the services require.
+
+    Every route these tests exercise is published to the internet by nginx and
+    now sits behind one operator login, so the test client signs in the same way
+    the browser does.
+    """
+    from services.common.auth import issue_token
+
+    token, _ = issue_token("supervisor")
+    return {"Authorization": f"Bearer {token}"}
+
 @pytest.mark.asyncio
 async def test_healthz_and_readyz():
     """Verify health and readiness endpoints respond 200."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         res = await client.get("/healthz")
         assert res.status_code == 200
         assert res.json()["status"] == "ok"
@@ -102,7 +114,7 @@ async def test_control_plane_rollback_remediation():
 @pytest.mark.asyncio
 async def test_api_endpoints_workflow():
     """End-to-end API test triggering an incident and applying remediation."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         # 1. Trigger incident
         res = await client.post(
             "/scenario/trigger-incident",
@@ -262,3 +274,64 @@ def test_render_trace_timestamps_are_real_epoch_time():
     assert before - 5 <= end_sec <= after + 5, (
         f"span ended at {end_sec}, which is {end_sec - after:.0f}s from now"
     )
+
+
+def test_reprioritize_queue_applies_the_sequences_the_planner_sends():
+    """Verify the action changes world state and names the real sequences.
+
+    It used to read `priority_sequence` while the planner sends
+    `priority_sequences`, so it never matched: every approval fell back to a
+    hardcoded "Final Chase", reported that name back, and changed nothing.
+    """
+    from src.control import execute_control_action
+
+    result = execute_control_action(
+        "t20",
+        "reprioritize_queue",
+        {"priority_sequences": ["Rooftop Pursuit", "Final Chase"]},
+    )
+
+    assert result["status"] == "APPLIED"
+    assert result["priority_sequences"] == ["Rooftop Pursuit", "Final Chase"]
+    # The world actually carries it, and it is visible to the dashboard.
+    assert engine.get_world("t20").priority_sequences == ["Rooftop Pursuit", "Final Chase"]
+    assert engine.get_world("t20").to_dict()["priority_sequences"] == [
+        "Rooftop Pursuit",
+        "Final Chase",
+    ]
+    # No capacity is added, so the message must not claim recovered throughput.
+    assert "throughput is unchanged" in result["message"]
+
+
+def test_reprioritize_queue_refuses_an_empty_sequence_list():
+    """Verify a reprioritisation naming nothing reports failure, not success."""
+    from src.control import execute_control_action
+
+    result = execute_control_action("t21", "reprioritize_queue", {"priority_sequences": []})
+    assert result["status"] == "FAILED"
+    assert engine.get_world("t21").priority_sequences == []
+
+
+def test_scaling_does_not_overwrite_a_live_worker():
+    """Verify new worker ids continue past the highest in use, not the count.
+
+    Numbering from len(workers) regenerated an existing id once any worker had
+    been removed, so a scale-up silently replaced a live worker rather than
+    adding one.
+    """
+    from src.control import execute_control_action
+
+    world = engine.get_world("t22")
+    before = set(world.workers)
+    assert len(before) == 8
+
+    # A worker leaves the fleet, so the count no longer matches the highest id.
+    removed = "w-03"
+    del world.workers[removed]
+
+    execute_control_action("t22", "scale_render_workers", {"additional_workers": 2})
+
+    # Nothing that survived was replaced, and the fleet actually grew.
+    assert (before - {removed}).issubset(set(world.workers))
+    assert len(world.workers) == 9
+    assert {"w-09", "w-10"}.issubset(set(world.workers))

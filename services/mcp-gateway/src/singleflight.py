@@ -15,6 +15,11 @@ class SingleFlightGroup:
         self._flights: Dict[str, asyncio.Future[Any]] = {}
         self._lock = asyncio.Lock()
 
+    @property
+    def in_flight(self) -> int:
+        """Number of upstream calls currently being shared between callers."""
+        return len(self._flights)
+
     async def execute(self, key: str, fn: Callable[[], Awaitable[Any]]) -> Tuple[Any, bool]:
         """Executes fn or waits for an existing in-flight call for the given key.
         

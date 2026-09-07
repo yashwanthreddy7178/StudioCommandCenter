@@ -6,6 +6,7 @@ import {
   ImpactProjection,
   RemediationOption,
 } from '../types/api';
+import { withToken } from '../lib/auth';
 
 export function useRunStream(runId: string | null) {
   const [events, setEvents] = useState<StepEvent[]>([]);
@@ -36,7 +37,7 @@ export function useRunStream(runId: string | null) {
     lastSeqRef.current = 0;
 
     const url = `/api/stream/runs/${runId}/events?since_seq=${lastSeqRef.current}`;
-    const es = new EventSource(url);
+    const es = new EventSource(withToken(url));
     eventSourceRef.current = es;
 
     es.onmessage = (e) => {

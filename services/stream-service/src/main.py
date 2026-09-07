@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from src.config import settings
 from src.sse import event_generator
+from services.common.auth import SingleCredentialAuthMiddleware
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("stream-service")
@@ -21,12 +22,16 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     # Wildcard origin with credentials is rejected outright by browsers, and
-    # nothing needs it: auth is a JWT bearer token set on the request, not a
-    # cookie the browser attaches on its own.
+    # nothing needs it: auth is a signed bearer token the app sets on the
+    # request, not a cookie the browser attaches on its own.
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Every route below is published to the internet by nginx, so the whole app
+# sits behind one operator login. /healthz, /readyz and /auth/login stay open.
+app.add_middleware(SingleCredentialAuthMiddleware)
 
 
 @app.get("/healthz", status_code=status.HTTP_200_OK)

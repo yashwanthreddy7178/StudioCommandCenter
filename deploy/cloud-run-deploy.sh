@@ -28,6 +28,26 @@ if gcloud secrets describe spc-grafana-otlp-token --project "${PROJECT}" >/dev/n
     SECRET_FLAGS="${SECRET_FLAGS},GRAFANA_ACCESS_POLICY_TOKEN=spc-grafana-otlp-token:latest"
 fi
 
+# The operator password gates the whole app, so it is referenced from Secret
+# Manager like the Grafana tokens rather than passed on the command line. Without
+# the secret the service falls back to the documented default password, which is
+# public in .env.example -- so refuse to deploy a reachable service with it.
+if gcloud secrets describe spc-app-password --project "${PROJECT}" >/dev/null 2>&1; then
+    SECRET_FLAGS="${SECRET_FLAGS},APP_PASSWORD=spc-app-password:latest"
+    if gcloud secrets describe spc-app-auth-secret --project "${PROJECT}" >/dev/null 2>&1; then
+        SECRET_FLAGS="${SECRET_FLAGS},APP_AUTH_SECRET=spc-app-auth-secret:latest"
+    fi
+else
+    echo "ERROR: secret 'spc-app-password' not found in project ${PROJECT}." >&2
+    echo "       The service is deployed with --allow-unauthenticated, so the" >&2
+    echo "       operator login is the only thing in front of it. Create it with:" >&2
+    echo "" >&2
+    echo "         printf '%s' 'a-long-random-password' \\" >&2
+    echo "           | gcloud secrets create spc-app-password --data-file=- \\" >&2
+    echo "               --project ${PROJECT}" >&2
+    exit 1
+fi
+
 # --min-instances 1 --max-instances 1
 #     Run state, the evidence ledger, the audit trail and the tenant leases are
 #     in process memory. A second instance would not share them, and a browser
@@ -62,6 +82,6 @@ exec gcloud run deploy "${SERVICE}" \
     --set-env-vars "GRAFANA_OTLP_INSTANCE_ID=${GRAFANA_OTLP_INSTANCE_ID:-}" \
     --set-env-vars "NUM_TENANT_WORLDS=24" \
     --set-env-vars "TEMPO_SEARCH_AVAILABLE=true" \
-    --set-env-vars "ENABLE_METRIC_DISCOVERY=false" \
+    --set-env-vars "ENABLE_METRIC_DISCOVERY=false"     --set-env-vars "APP_USERNAME=${APP_USERNAME:-supervisor}" \
     --set-secrets "${SECRET_FLAGS}" \
     --quiet

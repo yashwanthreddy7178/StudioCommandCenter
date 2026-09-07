@@ -12,6 +12,18 @@ from src.main import app
 from src.sse import event_generator
 
 
+def _auth() -> dict:
+    """Bearer header for the single operator credential the services require.
+
+    Every route these tests exercise is published to the internet by nginx and
+    now sits behind one operator login, so the test client signs in the same way
+    the browser does.
+    """
+    from services.common.auth import issue_token
+
+    token, _ = issue_token("supervisor")
+    return {"Authorization": f"Bearer {token}"}
+
 @pytest.fixture
 def short_stream(monkeypatch):
     """Shrinks the stream's ceiling so a test can outlive it.
@@ -53,7 +65,7 @@ class _FakeClient:
 @pytest.mark.asyncio
 async def test_healthz_and_readyz():
     """Verify health and readiness probes."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         res = await client.get("/healthz")
         assert res.status_code == 200
         res = await client.get("/readyz")
@@ -70,7 +82,7 @@ async def test_stream_connection_header(short_stream):
     """
     async def _open_and_read() -> str:
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app), base_url="http://test", headers=_auth()
         ) as client:
             async with client.stream("GET", "/runs/run-test/events") as response:
                 assert response.status_code == 200

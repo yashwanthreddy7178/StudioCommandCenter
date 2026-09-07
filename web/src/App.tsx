@@ -11,8 +11,36 @@ import { AgentMetrics } from './components/AgentMetrics';
 import { useTenantLease } from './hooks/useTenantLease';
 import { useRunStream } from './hooks/useRunStream';
 import { WorldState } from './types/api';
+import { Login } from './components/Login';
+import { getToken, clearToken, UNAUTHORIZED_EVENT } from './lib/auth';
+import { apiFetch } from './lib/auth';
 
 export const App: React.FC = () => {
+  // One shared operator credential gates the whole app: every service route is
+  // published to the internet by nginx, and the approval gate behind them
+  // executes real remediations.
+  const [signedIn, setSignedIn] = useState<boolean>(() => getToken() !== null);
+
+  if (!signedIn) {
+    return <Login onSignedIn={() => setSignedIn(true)} />;
+  }
+
+  return <CommandCentre onSignedOut={() => { clearToken(); setSignedIn(false); }} />;
+};
+
+interface CommandCentreProps {
+  /** Called when the server rejects the stored token mid-session. */
+  onSignedOut: () => void;
+}
+
+const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
+  // A token that expires mid-session shows up as a 401 on whichever poll fires
+  // first. Any of them means the same thing, so the shell listens once.
+  useEffect(() => {
+    window.addEventListener(UNAUTHORIZED_EVENT, onSignedOut);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onSignedOut);
+  }, [onSignedOut]);
+
   const { lease } = useTenantLease();
   const [world, setWorld] = useState<WorldState | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -35,7 +63,7 @@ export const App: React.FC = () => {
   const fetchWorld = useCallback(async () => {
     if (!lease) return;
     try {
-      const res = await fetch(`/api/sim/worlds/${lease.tenant_id}`);
+      const res = await apiFetch(`/api/sim/worlds/${lease.tenant_id}`);
       if (res.ok) {
         const data: WorldState = await res.json();
         setWorld(data);
@@ -58,7 +86,7 @@ export const App: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/impact/deliverables');
+        const res = await apiFetch('/api/impact/deliverables');
         if (!res.ok) return;
         const rows = await res.json();
         if (!cancelled && rows.length > 0) {
@@ -87,7 +115,7 @@ export const App: React.FC = () => {
   const handleTriggerIncident = async () => {
     if (!lease) return;
     try {
-      await fetch('/api/gateway/scenario/trigger-incident', {
+      await apiFetch('/api/gateway/scenario/trigger-incident', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -107,7 +135,7 @@ export const App: React.FC = () => {
   const handleResetWorld = async () => {
     if (!lease) return;
     try {
-      await fetch(`/api/gateway/scenario/reset/${lease.tenant_id}`, {
+      await apiFetch(`/api/gateway/scenario/reset/${lease.tenant_id}`, {
         method: 'POST',
       });
       setActiveRunId(null);
@@ -120,7 +148,7 @@ export const App: React.FC = () => {
   const handleStartInvestigation = async () => {
     if (!lease) return;
     try {
-      const res = await fetch('/api/gateway/runs', {
+      const res = await apiFetch('/api/gateway/runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -141,7 +169,7 @@ export const App: React.FC = () => {
     if (!lease || !activeRunId) return;
     setIsExecutingApproval(true);
     try {
-      await fetch(`/api/gateway/runs/${activeRunId}/approve`, {
+      await apiFetch(`/api/gateway/runs/${activeRunId}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

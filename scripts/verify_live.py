@@ -98,7 +98,7 @@ class Report:
         print(f"{'Check':<34} | {'Status':<6} | Detail")
         print("-" * 78)
         for name, status, message in self.rows:
-            print(f"{name:<34} | {status:<6} | {message[:severe_width()]}")
+            print(f"{name:<34} | {status:<6} | {message[:DETAIL_WIDTH]}")
         print("-" * 78)
         failed = [r for r in self.rows if r[1] == FAIL]
         skipped = [r for r in self.rows if r[1] == SKIP]
@@ -114,8 +114,10 @@ class Report:
         return 1 if failed else 0
 
 
-def severe_width() -> int:
-    return 30
+# Detail column width in the summary table. Was a function returning 30, which
+# cut every message to a third of its length in the table a reader actually
+# scans, while the line printed during the run showed it in full.
+DETAIL_WIDTH = 120
 
 
 class MCPProbe:

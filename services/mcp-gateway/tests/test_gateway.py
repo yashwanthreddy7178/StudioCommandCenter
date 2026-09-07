@@ -17,6 +17,18 @@ from src.allowlist import (
 from src.rewriter import inject_tenant_promql, inject_tenant_logql, rewrite_tool_parameters
 
 
+def _auth() -> dict:
+    """Bearer header for the single operator credential the services require.
+
+    Every route these tests exercise is published to the internet by nginx and
+    now sits behind one operator login, so the test client signs in the same way
+    the browser does.
+    """
+    from services.common.auth import issue_token
+
+    token, _ = issue_token("supervisor")
+    return {"Authorization": f"Bearer {token}"}
+
 @pytest.fixture
 def stub_upstream(monkeypatch):
     """Replaces the Grafana MCP upstream with a counting stub.
@@ -155,7 +167,7 @@ def test_tenant_injection_logql():
 @pytest.mark.asyncio
 async def test_gateway_allowlist_endpoint_blocking():
     """Verify gateway API rejects forbidden tools with 403."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         # Forbidden assistant tool
         res = await client.post(
             "/call",
@@ -183,7 +195,7 @@ async def test_gateway_allowlist_endpoint_blocking():
 @pytest.mark.asyncio
 async def test_gateway_caching_and_logging(stub_upstream):
     """Verify caching, deduplication, and structured call logs."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         # First call (miss)
         res1 = await client.post(
             "/call",
@@ -226,7 +238,7 @@ async def test_gateway_caching_and_logging(stub_upstream):
 @pytest.mark.asyncio
 async def test_singleflight_concurrent_deduplication(stub_upstream):
     """Verify concurrent requests with identical keys collapse to single upstream call."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         # Launch 5 concurrent calls
         req_payload = {
             "tool_name": "list_loki_label_names",
@@ -281,7 +293,7 @@ def test_write_path_accepts_only_write_tools():
 @pytest.mark.asyncio
 async def test_write_endpoint_rejects_a_query_tool_and_applies_a_write(stub_upstream):
     """/write refuses read tools, and a permitted write reaches upstream once."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         refused = await client.post(
             "/write",
             json={
@@ -324,7 +336,7 @@ async def test_write_endpoint_rejects_a_query_tool_and_applies_a_write(stub_upst
 @pytest.mark.asyncio
 async def test_write_requires_an_approval_id(stub_upstream):
     """A write with no approval behind it is rejected before it is attempted."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_auth()) as client:
         res = await client.post(
             "/write",
             json={
@@ -335,3 +347,63 @@ async def test_write_requires_an_approval_id(stub_upstream):
         )
         assert res.status_code == 422
         assert "create_annotation" not in stub_upstream
+
+
+def test_a_forged_matcher_cannot_stand_in_for_the_injected_one():
+    """Verify a tenant matcher is applied even when the query claims to have one.
+
+    The injectors used to skip their work if the query already contained the
+    matcher text. The queries are written by a model reading attacker-influencable
+    telemetry, and the check was a substring test, so any of these read every
+    tenant's data while looking constrained.
+    """
+    from src.rewriter import inject_tenant_traceql
+
+    # TraceQL accepted the bare substring anywhere, including a span value.
+    assert 'span.tenant_id = "t07"' in inject_tenant_traceql('{ name = "tenant_id" }', "t07")
+    assert 'span.tenant_id = "t07"' in inject_tenant_traceql(
+        '{ span.foo = "tenant_id lol" }', "t07"
+    )
+
+    # PromQL and LogQL both accept backtick strings, which need no escaping, so
+    # the exact matcher text could be smuggled in as a label value or line filter.
+    assert 'tenant_id="t07"' in inject_tenant_promql('up{note=`tenant_id="t07"`}', "t07")
+    assert '| tenant_id="t07"' in inject_tenant_logql(
+        '{service_name="x"} |= `tenant_id="t07"`', "t07"
+    )
+
+
+def test_another_tenants_matcher_is_replaced_not_appended():
+    """Verify a matcher naming a different tenant is overwritten, not honoured."""
+    from src.rewriter import inject_tenant_traceql
+
+    prom = inject_tenant_promql('up{tenant_id="t01"}', "t07")
+    assert 'tenant_id="t07"' in prom
+    assert 'tenant_id="t01"' not in prom
+
+    logql = inject_tenant_logql('{service_name="x"} | tenant_id="t01"', "t07")
+    assert 'tenant_id="t07"' in logql
+    assert 'tenant_id="t01"' not in logql
+
+    traceql = inject_tenant_traceql('{ span.tenant_id = "t01" }', "t07")
+    assert '"t07"' in traceql
+    assert '"t01"' not in traceql
+
+
+def test_injection_stays_stable_across_repeated_rewrites():
+    """Verify re-injecting a scoped query returns it unchanged.
+
+    Stripping the existing matcher before adding ours is what makes this hold;
+    without collapsing the whitespace a removed stage leaves behind, a LogQL
+    query grew a space on every pass.
+    """
+    from src.rewriter import inject_tenant_traceql
+
+    for fn, query in (
+        (inject_tenant_promql, "render_queue_depth_frames"),
+        (inject_tenant_promql, 'avg(m{worker_id="w-03"}) by (renderer_version)'),
+        (inject_tenant_logql, '{job="render"} |= "error"'),
+        (inject_tenant_traceql, '{ name = "render_frame" }'),
+    ):
+        once = fn(query, "t01")
+        assert fn(once, "t01") == once, query
