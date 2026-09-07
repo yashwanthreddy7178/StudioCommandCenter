@@ -7,6 +7,7 @@ import time
 from typing import AsyncGenerator
 import httpx
 from src.config import settings
+from services.common.auth import internal_auth
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("stream-service-sse")
@@ -25,7 +26,7 @@ async def event_generator(run_id: str, since_seq: int = 0) -> AsyncGenerator[str
     current_seq = since_seq
     last_heartbeat = time.time()
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, auth=internal_auth()) as client:
         # Initial connection notification
         handshake = {"run_id": run_id, "connected": True, "event_type": "CONNECTED"}
         yield f"data: {json.dumps(handshake)}\n\n"

@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.config import settings
+from services.common.auth import internal_auth
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("action-executor-grafana")
@@ -36,7 +37,7 @@ class GrafanaWriteBack:
     """Writes approved remediations back to Grafana through the MCP gateway."""
 
     def __init__(self) -> None:
-        self._http_client = httpx.AsyncClient(timeout=15.0)
+        self._http_client = httpx.AsyncClient(timeout=15.0, auth=internal_auth())
 
     async def _write(
         self,

@@ -22,19 +22,30 @@ export function useRunStream(runId: string | null) {
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
+    // Everything below belongs to one run, so it is cleared whenever the run
+    // changes -- not only when it goes away.
+    //
+    // Clearing solely on `!runId` meant starting a second investigation carried
+    // the first one's ledger, scorecard and verified projection straight into
+    // it. Worse than stale: every run numbers its events from 1, so the new
+    // run's events collided with the leftovers and were discarded by the
+    // duplicate check below. The panels did not lag behind the new run, they
+    // ignored it entirely and sat frozen on the old one.
+    setEvents([]);
+    setRunState('QUEUED');
+    setHypothesis(null);
+    setImpact(null);
+    setOptions([]);
+    setVerificationImpact(null);
+    setError(null);
+    lastSeqRef.current = 0;
+
     if (!runId) {
-      setEvents([]);
-      setRunState('QUEUED');
-      setHypothesis(null);
-      setImpact(null);
-      setOptions([]);
-      setVerificationImpact(null);
+      setIsStreaming(false);
       return;
     }
 
     setIsStreaming(true);
-    setError(null);
-    lastSeqRef.current = 0;
 
     const url = `/api/stream/runs/${runId}/events?since_seq=${lastSeqRef.current}`;
     const es = new EventSource(withToken(url));

@@ -10,6 +10,7 @@ import httpx
 from src.config import settings
 from src.audit import audit_store
 from src.grafana_writeback import grafana_writeback
+from services.common.auth import internal_auth
 from services.common.models import ActionType, ApprovalRecord, AuditRecord
 from services.common.telemetry import setup_logging
 
@@ -20,7 +21,7 @@ class ActionExecutionEngine:
     """Executes human-approved remediation actions idempotently against render control plane."""
 
     def __init__(self) -> None:
-        self._http_client = httpx.AsyncClient(timeout=10.0)
+        self._http_client = httpx.AsyncClient(timeout=10.0, auth=internal_auth())
         # One lock per idempotency key. The duplicate check and the write that
         # satisfies it are separated by an HTTP call to the control plane, so
         # without holding a lock across both, two approvals of the same option

@@ -53,12 +53,12 @@ export const EvidenceLedger: React.FC<EvidenceLedgerProps> = ({ events }) => {
                       <div className="flex items-center space-x-2">
                         <span className="font-semibold text-white">{event.title}</span>
                         {toolName && (
-                          <span className="bg-studio-border text-studio-cyan text-[10px] px-1.5 py-0.2 rounded font-bold">
+                          <span className="bg-studio-border text-studio-cyan text-[10px] px-1.5 py-0.5 rounded font-bold">
                             {toolName}
                           </span>
                         )}
                         {isCacheHit && (
-                          <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[9px] px-1.5 py-0.2 rounded font-bold flex items-center space-x-1">
+                          <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[9px] px-1.5 py-0.5 rounded font-bold flex items-center space-x-1">
                             <Zap className="w-2.5 h-2.5" />
                             <span>CACHE HIT</span>
                           </span>

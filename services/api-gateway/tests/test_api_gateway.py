@@ -206,3 +206,62 @@ async def test_observer_leases_can_be_found_by_tenant_id():
 
     assert await manager.release_lease("observer", "sess-watcher") is True
     assert await manager.holds_lease("observer", "sess-watcher") is False
+
+
+@pytest.mark.asyncio
+async def test_internal_calls_carry_a_service_credential():
+    """Verify a client built for internal calls actually sends a usable token.
+
+    Protecting the internal services without this broke every cross-service
+    call: render-sim answered api-gateway with 401 and api-gateway reported a
+    500 to the browser. The whole suite stayed green because every cross-service
+    call in these tests is mocked.
+    """
+    import httpx
+    from services.common.auth import internal_auth, verify_token, SERVICE_PRINCIPAL
+
+    seen: dict = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers.get("Authorization")
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(capture), auth=internal_auth()
+    ) as client:
+        res = await client.post("http://render-sim/scenario/trigger-incident", json={})
+
+    assert res.status_code == 200
+    header = seen["authorization"]
+    assert header.startswith("Bearer ")
+    # The callee's middleware has to accept it, and it must be identifiable as a
+    # service rather than an operator sign-in.
+    assert verify_token(header[len("Bearer "):]) == SERVICE_PRINCIPAL
+
+
+def test_every_internal_http_client_is_authenticated():
+    """Verify no service builds a bare client for calling another service.
+
+    A structural check rather than a behavioural one: the failure mode is a call
+    site that simply forgot the credential, which no amount of mocking in the
+    unit tests will surface.
+    """
+    import re
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    # mcp-gateway's client talks to Grafana and carries Grafana's own bearer
+    # token; adding ours would be wrong, not merely redundant.
+    exempt = {repo_root / "services" / "mcp-gateway" / "src" / "mcp_client.py"}
+
+    unauthenticated = []
+    for path in (repo_root / "services").rglob("src/**/*.py"):
+        if path in exempt or "__pycache__" in str(path):
+            continue
+        for match in re.finditer(r"httpx\.AsyncClient\(([^)]*)\)", path.read_text(encoding="utf-8")):
+            if "auth=" not in match.group(1):
+                unauthenticated.append(f"{path.relative_to(repo_root)}: {match.group(0)}")
+
+    assert not unauthenticated, (
+        "these clients call another service without a credential: " + "; ".join(unauthenticated)
+    )

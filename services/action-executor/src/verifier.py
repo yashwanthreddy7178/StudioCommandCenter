@@ -19,6 +19,7 @@ from services.common.analysis import (
     split_degraded,
     values_by_worker,
 )
+from services.common.auth import internal_auth
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("action-executor-verifier")
@@ -28,7 +29,7 @@ class RemediationVerifier:
     """Checks whether an applied remediation actually restored the fleet."""
 
     def __init__(self) -> None:
-        self._http_client = httpx.AsyncClient(timeout=30.0)
+        self._http_client = httpx.AsyncClient(timeout=30.0, auth=internal_auth())
 
     async def _query(self, tenant_id: str, run_id: str, expr: str) -> Any:
         """Runs one PromQL query through mcp-gateway, returning the raw result."""

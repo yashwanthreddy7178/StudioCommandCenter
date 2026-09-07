@@ -59,7 +59,7 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
                   <div className="flex items-center space-x-2">
                     <span className="text-sm font-semibold text-white">{opt.title}</span>
                     {isRecommended && (
-                      <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] px-1.5 py-0.2 rounded font-bold flex items-center space-x-1">
+                      <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center space-x-1">
                         <Sparkles className="w-2.5 h-2.5" />
                         <span>RECOMMENDED</span>
                       </span>

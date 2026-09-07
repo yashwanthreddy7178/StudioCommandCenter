@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from src.config import settings
 from services.common.models import ImpactProjection, RemediationOption
+from services.common.auth import internal_auth
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("agent-worker-tools")
@@ -14,7 +15,7 @@ class AgentToolClient:
     """Client for calling allowlisted MCP tools through mcp-gateway and deterministic services."""
 
     def __init__(self) -> None:
-        self._http_client = httpx.AsyncClient(timeout=15.0)
+        self._http_client = httpx.AsyncClient(timeout=15.0, auth=internal_auth())
 
     async def call_mcp_gateway(
         self,

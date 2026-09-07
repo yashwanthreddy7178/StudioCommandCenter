@@ -36,12 +36,3 @@
 .animate-glow-danger {
   animation: glow-pulse 2s infinite ease-in-out;
 }
-
-@keyframes glow-success {
-  0%, 100% { opacity: 0.9; filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.6)); }
-  50% { opacity: 0.5; filter: drop-shadow(0 0 2px rgba(16, 185, 129, 0.2)); }
-}
-
-.animate-glow-success {
-  animation: glow-success 2.5s infinite ease-in-out;
-}

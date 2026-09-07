@@ -25,7 +25,9 @@ import hmac
 import json
 import os
 import time
-from typing import Optional
+from typing import Dict, Optional
+
+import httpx
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -127,6 +129,41 @@ def token_from_request(request: Request) -> Optional[str]:
     if header.startswith("Bearer "):
         return header[len("Bearer "):].strip()
     return request.query_params.get("access_token")
+
+
+# Subject recorded on a token one service mints to call another. Distinct from
+# an operator login so the two are told apart in logs; it carries no separate
+# privilege, because there is nothing here to separate yet.
+SERVICE_PRINCIPAL = "svc:internal"
+
+
+def service_auth_headers() -> Dict[str, str]:
+    """Bearer header for one service calling another."""
+    token, _ = issue_token(SERVICE_PRINCIPAL)
+    return {"Authorization": f"Bearer {token}"}
+
+
+class ServiceAuth(httpx.Auth):
+    """Attaches an internal token to every request an httpx client makes.
+
+    Applied at the client rather than at each call site. The services call each
+    other constantly -- api-gateway to render-sim, agent-worker to mcp-gateway,
+    action-executor to all three -- and putting the credential on the client
+    means a new call site cannot forget it. Forgetting it is not a subtle
+    failure: the callee returns 401 and the caller reports a 500, which is
+    exactly what protecting these services without this did.
+    """
+
+    def auth_flow(self, request: httpx.Request):
+        # Minted per request rather than cached: signing is an HMAC over a few
+        # dozen bytes, and a cached token would eventually expire mid-flight.
+        request.headers["Authorization"] = service_auth_headers()["Authorization"]
+        yield request
+
+
+def internal_auth() -> ServiceAuth:
+    """The auth to hand an httpx client that calls another service in this stack."""
+    return ServiceAuth()
 
 
 class SingleCredentialAuthMiddleware(BaseHTTPMiddleware):

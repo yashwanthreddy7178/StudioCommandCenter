@@ -11,6 +11,7 @@ from src.config import settings
 from src.lease import lease_manager
 from services.common.models import ApprovalRequest, RunDocument, TenantLease
 from services.common.auth import (
+    internal_auth,
     SingleCredentialAuthMiddleware,
     check_credentials,
     issue_token,
@@ -40,7 +41,7 @@ app.add_middleware(
 # sits behind one operator login. /healthz, /readyz and /auth/login stay open.
 app.add_middleware(SingleCredentialAuthMiddleware)
 
-http_client = httpx.AsyncClient(timeout=10.0)
+http_client = httpx.AsyncClient(timeout=10.0, auth=internal_auth())
 
 
 class LoginRequest(BaseModel):
