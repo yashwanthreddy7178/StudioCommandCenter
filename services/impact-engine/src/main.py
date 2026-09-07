@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, AsyncGenerator, Dict, List
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +14,8 @@ from src.config import settings
 from src.db import get_db_session, init_db
 from src.schema import Deliverable, Production, Scene, Sequence, Shot
 from src.calculator import calculate_production_impact
-from services.common.models import ImpactProjection
+from services.common.models import ImpactProjection, UtcDatetime
+from services.common.timeutil import to_naive_utc, to_utc, utc_now
 from services.common.telemetry import setup_logging
 
 logger = setup_logging("impact-engine")
@@ -28,7 +29,10 @@ class ImpactProjectionRequest(BaseModel):
     observed_throughput_fpm: float = 41.2
     baseline_throughput_fpm: float = 118.6
     queue_depth: int = 2800
-    as_of: datetime = Field(default_factory=datetime.utcnow)
+    # A caller may state a zone, or none at all. Either way the projection works
+    # in aware UTC, so a trailing Z no longer meets a naive deadline halfway
+    # through the calculation and raises TypeError.
+    as_of: UtcDatetime = Field(default_factory=utc_now)
 
 
 @asynccontextmanager
@@ -107,11 +111,11 @@ async def reanchor_deadline(
     fixed for the duration of a run, so a projection is still a comparison
     against a deadline rather than a rolling target.
     """
-    deadline = datetime.utcnow() + timedelta(minutes=req.minutes_from_now)
+    deadline = utc_now() + timedelta(minutes=req.minutes_from_now)
     res = await session.execute(select(Deliverable))
     deliverables = res.scalars().all()
     for deliverable in deliverables:
-        deliverable.deadline_utc = deadline
+        deliverable.deadline_utc = to_naive_utc(deadline)
     await session.commit()
 
     logger.info(
@@ -197,7 +201,7 @@ async def list_deliverables(session: AsyncSession = Depends(get_db_session)) -> 
             "deliverable_id": d.deliverable_id,
             "production_id": d.production_id,
             "name": d.name,
-            "deadline_utc": d.deadline_utc.isoformat(),
+            "deadline_utc": to_utc(d.deadline_utc).isoformat(),
         }
         for d in delivs
     ]

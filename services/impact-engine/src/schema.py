@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+
+from services.common.timeutil import naive_utc_now
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -89,7 +91,7 @@ class RenderJob(Base):
     worker_id: Mapped[str] = mapped_column(String(64), nullable=False)
     frame: Mapped[int] = mapped_column(Integer, nullable=False)
     state: Mapped[str] = mapped_column(String(64), default="RUNNING")
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=naive_utc_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     shot: Mapped[Shot] = relationship("Shot", back_populates="render_jobs")

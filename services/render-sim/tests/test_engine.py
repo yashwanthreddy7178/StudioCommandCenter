@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from src.main import app
 from src.engine import engine
 from src.models import GPU_PROFILES
+from services.common.timeutil import utc_now
 from src.world import TenantProductionWorld
 from services.common.models import ActionType
 
@@ -172,7 +173,7 @@ def test_render_trace_attributes_slowdown_to_the_gpu_span():
 
     healthy = world.workers["w-02"]
     degraded = world.workers["w-01"]
-    now = datetime.utcnow()
+    now = utc_now()
 
     telemetry._emit_render_trace(world, healthy, now)
     telemetry._emit_render_trace(world, degraded, now)
@@ -249,7 +250,7 @@ def test_render_trace_timestamps_are_real_epoch_time():
     worker = world.workers["w-01"]
 
     before = time.time()
-    telemetry._emit_render_trace(world, worker, datetime.utcnow())
+    telemetry._emit_render_trace(world, worker, utc_now())
     provider.force_flush()
     after = time.time()
 

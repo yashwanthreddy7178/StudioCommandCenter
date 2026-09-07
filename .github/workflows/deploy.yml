@@ -48,19 +48,35 @@ jobs:
       # One service at a time: each pins its own `src` package, so pointing
       # pytest at two service directories at once makes the import ambiguous and
       # collection fails.
+      #
+      # impact-engine used to be run with --no-cov, which silently disabled
+      # the --cov-fail-under=95 in its pyproject: the only coverage gate in
+      # the repo was enforced nowhere except on a developer's own machine,
+      # where it failed. It is met now, so it runs like everything else.
       - name: Run tests
         run: |
           set -e
           for s in render-sim mcp-gateway impact-engine action-executor \
                    agent-worker api-gateway stream-service; do
             echo "::group::$s"
-            if [ "$s" = "impact-engine" ]; then
-              python -m pytest "services/$s/tests" -q --no-cov
-            else
-              python -m pytest "services/$s/tests" -q
-            fi
+            python -m pytest "services/$s/tests" -q
             echo "::endgroup::"
           done
+
+      # The web app ships in the same image, so its typecheck and unit tests
+      # gate the deploy alongside the services. A test runner that CI never
+      # invokes is the coverage gate all over again.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web typecheck and tests
+        run: |
+          npm --prefix web ci
+          npm --prefix web run typecheck
+          npm --prefix web run test
 
       - name: Submission compliance audit
         run: python scripts/compliance_audit.py

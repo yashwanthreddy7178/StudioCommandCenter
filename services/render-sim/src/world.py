@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime
 from typing import Dict, List, Optional
 from src.models import GPU_PROFILES, RenderWorkerNode
+from services.common.timeutil import utc_now
 
 # Frames outstanding at the start of a scenario.
 #
@@ -29,7 +29,7 @@ class TenantProductionWorld:
         self.is_incident_active = False
         self.incident_type: Optional[str] = None
         self.queue_depth = BASELINE_QUEUE_DEPTH
-        self.last_updated = datetime.utcnow()
+        self.last_updated = utc_now()
         self.workers: Dict[str, RenderWorkerNode] = {}
 
         self._initialize_workers(num_workers)
@@ -129,7 +129,7 @@ class TenantProductionWorld:
 
     def tick(self) -> None:
         """Executes a discrete simulation step."""
-        self.last_updated = datetime.utcnow()
+        self.last_updated = utc_now()
         degraded_count = sum(1 for w in self.workers.values() if w.is_degraded and not w.is_drained)
         active_count = sum(1 for w in self.workers.values() if not w.is_drained)
 

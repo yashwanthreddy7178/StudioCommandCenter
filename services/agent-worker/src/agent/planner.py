@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from opentelemetry import trace as otel_trace
@@ -38,6 +37,7 @@ from services.common.models import (
     StepEvent,
 )
 from services.common.telemetry import setup_logging
+from services.common.timeutil import utc_now
 
 logger = setup_logging("agent-worker-planner")
 
@@ -399,7 +399,7 @@ class InvestigationPlanner:
             extra={"run_id": run_id, "tenant_id": tenant_id},
         )
         run_doc.state = RunState.RUNNING
-        run_doc.started_at = datetime.utcnow()
+        run_doc.started_at = utc_now()
 
         await event_emitter.emit_event(
             StepEvent(

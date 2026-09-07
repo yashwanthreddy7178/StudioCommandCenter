@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from opentelemetry import trace as otel_trace
@@ -24,6 +24,7 @@ from opentelemetry.sdk.resources import Resource
 from src.config import settings
 from src.world import TenantProductionWorld
 from services.common.telemetry import setup_logging
+from services.common.timeutil import to_utc, utc_now
 from services.common.tracing import configure_tracing, shutdown_tracing
 
 logger = setup_logging("render-sim-otel")
@@ -270,11 +271,12 @@ class OTelTelemetryExporter:
         write_sec = 0.8
         gpu_sec = max(duration_sec - fetch_sec - write_sec, 0.1)
 
-        # `now` is a naive datetime holding UTC. Calling .timestamp() on it makes
-        # Python interpret it as local time, which on any machine that is not on
-        # UTC shifts every span by the offset -- four hours into the future here.
-        # Tempo stored them and no search over a recent window ever matched.
-        end_ns = int(now.replace(tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+        # `now` is read as UTC whether it arrives aware or naive. Passing a
+        # naive value to .timestamp() interprets it as local time, which on any
+        # machine not on UTC shifted every span by the offset -- four hours into
+        # the future here. Tempo stored them and no search over a recent window
+        # ever matched.
+        end_ns = int(to_utc(now).timestamp() * 1_000_000_000)
         start_ns = end_ns - int(duration_sec * 1_000_000_000)
 
         attributes: Dict[str, Any] = {
@@ -343,7 +345,7 @@ class OTelTelemetryExporter:
         }
 
         self.buffer.add_log({
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utc_now().isoformat(),
             "labels": {"tenant_id": world.tenant_id, "level": "info", "event": event},
             "line": body,
         })
@@ -443,7 +445,7 @@ class OTelTelemetryExporter:
     async def emit_world_telemetry(self, world: TenantProductionWorld) -> None:
         """Records the latest world state for export and local inspection."""
         self._worlds[world.tenant_id] = world
-        now = datetime.utcnow()
+        now = utc_now()
 
         for wid, worker in world.workers.items():
             self.buffer.add_metric({

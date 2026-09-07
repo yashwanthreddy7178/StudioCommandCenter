@@ -1,19 +1,13 @@
 import React from 'react';
 import { AlertCircle, CheckCircle2, Gauge, Clock } from 'lucide-react';
 import { ImpactProjection, WorldState } from '../types/api';
+import { utcTime } from '../lib/time';
 
 interface DeliveryCountdownProps {
   impact: ImpactProjection | null;
   world: WorldState | null;
   /** Deadline from production metadata, known before any investigation runs. */
   productionDeadline?: string | null;
-}
-
-/** Formats an ISO timestamp as HH:MM:SS UTC. */
-function utcTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '--:--:--';
-  return `${d.toISOString().slice(11, 19)} UTC`;
 }
 
 /** Placeholder shown until a figure has actually been measured. */
@@ -37,6 +31,11 @@ export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({
   const atRisk = impact?.at_risk_deliverables ?? [];
   // The deadline exists independently of a projection.
   const deadline = impact?.deadline_utc ?? productionDeadline;
+  // Before a run there is no projection to date the deadline against, which is
+  // precisely when the deadline is furthest out and most likely to fall on the
+  // next UTC day. The panel re-renders on the world-state poll, so this rolls
+  // over on its own at midnight.
+  const nowIso = new Date().toISOString();
   const degraded = baseline !== null && throughput !== null && throughput < baseline * 0.9;
 
   return (
@@ -57,7 +56,7 @@ export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({
         <div className="bg-studio-card/80 border border-studio-border/60 rounded-lg p-3.5 flex flex-col justify-between">
           <span className="text-xs text-slate-400 font-medium">Target Deadline</span>
           <div className="text-xl font-bold font-mono text-white mt-1">
-            {deadline ? utcTime(deadline) : <Pending label="--:--:-- UTC" />}
+            {deadline ? utcTime(deadline, impact?.as_of ?? nowIso) : <Pending label="--:--:-- UTC" />}
           </div>
           <span className="text-[11px] text-slate-500 font-mono mt-1">
             {atRisk.length > 0 ? atRisk.join(', ') : 'Hard delivery lock'}
@@ -72,7 +71,7 @@ export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({
               isLate ? 'text-red-400 font-extrabold' : 'text-emerald-400'
             }`}
           >
-            {impact ? utcTime(impact.projected_completion_utc) : <Pending label="--:--:-- UTC" />}
+            {impact ? utcTime(impact.projected_completion_utc, impact.as_of) : <Pending label="--:--:-- UTC" />}
           </div>
           <span className="text-[11px] text-slate-500 font-mono mt-1">
             {impact ? (isLate ? 'Misses target deadline' : 'Inside the delivery window') : 'No projection yet'}

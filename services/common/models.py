@@ -7,8 +7,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from typing import Annotated, Any, Dict, List, Optional
+from pydantic import AfterValidator, BaseModel, Field
+
+from services.common.timeutil import to_utc, utc_now
+
+# Every timestamp on a model that crosses a process boundary is aware UTC, so
+# Pydantic serializes it with a designator. A value read back from a naive
+# DateTime column is labelled here rather than at each call site.
+UtcDatetime = Annotated[datetime, AfterValidator(to_utc)]
 
 
 class RunState(str, Enum):
@@ -104,7 +111,7 @@ class ProductionWorldState(BaseModel):
     degraded_workers: int = 0
     queue_depth: int = 2800
     workers: List[WorkerStatus] = Field(default_factory=list)
-    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    last_updated: UtcDatetime = Field(default_factory=utc_now)
 
 
 # ---------------------------------------------------------------------------
@@ -173,8 +180,8 @@ class ImpactProjection(BaseModel):
     affected_shots: int
     high_priority_shots: int
     sequences: List[str]
-    deadline_utc: datetime
-    projected_completion_utc: datetime
+    deadline_utc: UtcDatetime
+    projected_completion_utc: UtcDatetime
     delay_minutes: int
     at_risk_deliverables: List[str]
     baseline_throughput_fpm: float
@@ -182,7 +189,7 @@ class ImpactProjection(BaseModel):
     queue_depth: int
     method: str
     is_remediated: bool = False
-    as_of: datetime = Field(default_factory=datetime.utcnow)
+    as_of: UtcDatetime = Field(default_factory=utc_now)
 
 
 class EvidencePayload(BaseModel):
@@ -196,7 +203,7 @@ class EvidencePayload(BaseModel):
     cache_hit: bool
     is_stale: bool = False
     raw_data: Any
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: UtcDatetime = Field(default_factory=utc_now)
 
 
 class StepEvent(BaseModel):
@@ -210,7 +217,7 @@ class StepEvent(BaseModel):
     evidence_id: Optional[str] = None
     step_turn: Optional[int] = None
     payload: Dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: UtcDatetime = Field(default_factory=utc_now)
 
 
 class RunDocument(BaseModel):
@@ -221,9 +228,9 @@ class RunDocument(BaseModel):
     session_id: str
     objective: str
     state: RunState = RunState.QUEUED
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    created_at: UtcDatetime = Field(default_factory=utc_now)
+    started_at: Optional[UtcDatetime] = None
+    completed_at: Optional[UtcDatetime] = None
     confidence: Optional[ConfidenceLevel] = None
     hypothesis: Optional[HypothesisScorecard] = None
     impact: Optional[ImpactProjection] = None
@@ -257,7 +264,7 @@ class ApprovalRecord(BaseModel):
     option_id: str
     tenant_id: str
     user_id: str
-    approved_at: datetime = Field(default_factory=datetime.utcnow)
+    approved_at: UtcDatetime = Field(default_factory=utc_now)
     action_type: ActionType
     parameters: Dict[str, Any]
     executor_status: str
@@ -273,7 +280,7 @@ class AuditRecord(BaseModel):
     user_id: str
     action_type: ActionType
     parameters: Dict[str, Any]
-    executed_at: datetime = Field(default_factory=datetime.utcnow)
+    executed_at: UtcDatetime = Field(default_factory=utc_now)
     status: str
     message: str
 
@@ -287,9 +294,9 @@ class TenantLease(BaseModel):
     tenant_id: str
     session_id: str
     user_id: str
-    leased_at: datetime = Field(default_factory=datetime.utcnow)
-    heartbeat_at: datetime = Field(default_factory=datetime.utcnow)
-    expires_at: datetime
+    leased_at: UtcDatetime = Field(default_factory=utc_now)
+    heartbeat_at: UtcDatetime = Field(default_factory=utc_now)
+    expires_at: UtcDatetime
     is_observer: bool = False
     status: TenantStatus = TenantStatus.LEASED
 
@@ -303,4 +310,4 @@ class ToolCallLog(BaseModel):
     is_stale: bool = False
     tenant_id: str
     run_id: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: UtcDatetime = Field(default_factory=utc_now)

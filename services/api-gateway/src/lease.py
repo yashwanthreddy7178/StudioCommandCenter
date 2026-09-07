@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Dict, List, Optional
 from src.config import settings
 from services.common.models import TenantLease, TenantStatus
 from services.common.telemetry import setup_logging
+from services.common.timeutil import utc_now
 
 logger = setup_logging("api-gateway-lease")
 
@@ -21,7 +22,7 @@ class TenantLeaseManager:
     async def acquire_lease(self, session_id: str, user_id: str = "usr-coordinator") -> TenantLease:
         """Assigns an available tenant world or attaches in observer mode."""
         async with self._lock:
-            now = datetime.utcnow()
+            now = utc_now()
             ttl = timedelta(seconds=settings.tenant_lease_ttl_sec)
 
             # 1. Check if this session already holds an active lease
@@ -68,7 +69,7 @@ class TenantLeaseManager:
     async def heartbeat(self, tenant_id: str, session_id: str) -> bool:
         """Extends the lease TTL via periodic client heartbeat."""
         async with self._lock:
-            now = datetime.utcnow()
+            now = utc_now()
             lease = self._leases.get(tenant_id)
             if lease and lease.session_id == session_id and lease.expires_at > now:
                 lease.heartbeat_at = now
@@ -89,7 +90,7 @@ class TenantLeaseManager:
     async def get_active_leases(self) -> List[TenantLease]:
         """Returns all currently active tenant leases."""
         async with self._lock:
-            now = datetime.utcnow()
+            now = utc_now()
             return [l for l in self._leases.values() if l.expires_at > now]
 
 

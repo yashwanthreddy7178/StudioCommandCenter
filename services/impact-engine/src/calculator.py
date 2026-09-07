@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from src.schema import Deliverable, RenderJob, Scene, Sequence, Shot
 from services.common.models import ImpactProjection
+from services.common.timeutil import to_utc
 
 
 def compute_deterministic_projection(
@@ -26,6 +27,11 @@ def compute_deterministic_projection(
     as_of: datetime,
 ) -> ImpactProjection:
     """Pure calculation function for delivery delay projection."""
+    # Both instants are read as UTC whichever form they arrive in, so a caller
+    # passing one naive and one aware gets an answer rather than a TypeError.
+    as_of = to_utc(as_of)
+    deadline_utc = to_utc(deadline_utc)
+
     safe_throughput = max(0.1, observed_throughput_fpm)
     minutes_needed = queue_depth / safe_throughput
     projected_completion = as_of + timedelta(minutes=minutes_needed)
@@ -74,6 +80,8 @@ async def calculate_production_impact(
     feed. Nothing is assumed: when the metadata yields no match the projection
     reports zero affected shots rather than substituting a plausible figure.
     """
+    as_of = to_utc(as_of)
+
     # 1. What the affected workers were actually rendering.
     jobs_query = (
         select(RenderJob)
@@ -130,7 +138,9 @@ async def calculate_production_impact(
     at_risk_names = [d.deliverable_id for d in ordered]
 
     if ordered:
-        deadline_utc = ordered[0].deadline_utc
+        # Read out of a naive DateTime column, so it is labelled UTC before
+        # being compared against an aware `as_of`.
+        deadline_utc = to_utc(ordered[0].deadline_utc)
     else:
         # Nothing traced to a deliverable, but the production still has one. The
         # deadline is a fact about the production, so the queue is still measured
@@ -141,7 +151,7 @@ async def calculate_production_impact(
             select(Deliverable).order_by(Deliverable.deadline_utc.asc()).limit(1)
         )
         primary = earliest.scalars().first()
-        deadline_utc = primary.deadline_utc if primary else as_of
+        deadline_utc = to_utc(primary.deadline_utc) if primary else as_of
 
     behind_baseline = observed_throughput_fpm < baseline_throughput_fpm * 0.9
     at_risk_now = at_risk_names if behind_baseline else []

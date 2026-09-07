@@ -1,9 +1,10 @@
 """Seed script to populate realistic VFX production metadata."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from services.common.timeutil import naive_utc_now
 from src.schema import (
     Deliverable,
     Production,
@@ -37,7 +38,7 @@ async def seed_production_database(session: AsyncSession) -> None:
         return
 
     # Base deadline 18:00 UTC today
-    now = datetime.utcnow()
+    now = naive_utc_now()
     deadline = now.replace(hour=18, minute=0, second=0, microsecond=0)
     if deadline < now:
         deadline = now + timedelta(hours=3, minutes=5)
