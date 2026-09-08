@@ -1,7 +1,6 @@
 """FastAPI application entrypoint for api-gateway."""
 from __future__ import annotations
 
-import os
 import uuid
 from typing import Any, Dict, List, Optional
 import httpx
@@ -70,25 +69,6 @@ async def login(req: LoginRequest) -> Dict[str, Any]:
     token, expires_at = issue_token(req.username)
     logger.info("Operator signed in", extra={"username": req.username})
     return {"token": token, "expires_at": expires_at}
-
-
-@app.get("/auth/demo-credentials", response_model=Dict[str, Any])
-async def demo_credentials() -> Dict[str, Any]:
-    """The credential to show on the sign-in screen, when there is one to show.
-
-    Served rather than compiled into the page so it cannot go stale: the public
-    deployment is expected to run a rotated password, and a screen that
-    confidently displays the old one is worse than a screen that displays
-    nothing. `published: false` is the honest answer for every deployment that
-    has not opted in, and it carries no password with it.
-    """
-    if not settings.demo_credentials_public:
-        return {"published": False}
-    return {
-        "published": True,
-        "username": os.environ.get("APP_USERNAME", "supervisor"),
-        "password": os.environ.get("APP_PASSWORD", "shadow-protocol"),
-    }
 
 
 class LeaseAcquireRequest(BaseModel):

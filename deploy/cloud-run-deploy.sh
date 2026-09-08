@@ -91,6 +91,5 @@ exec gcloud run deploy "${SERVICE}" \
     --set-env-vars "APP_USERNAME=${APP_USERNAME:-supervisor}" \
     --set-env-vars "MAX_RUNS_PER_SESSION=${MAX_RUNS_PER_SESSION:-6}" \
     --set-env-vars "MAX_RUNS_PER_DEPLOYMENT=${MAX_RUNS_PER_DEPLOYMENT:-60}" \
-    --set-env-vars "DEMO_CREDENTIALS_PUBLIC=${DEMO_CREDENTIALS_PUBLIC:-false}" \
     --set-secrets "${SECRET_FLAGS}" \
     --quiet

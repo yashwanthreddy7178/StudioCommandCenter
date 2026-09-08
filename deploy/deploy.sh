@@ -37,7 +37,6 @@ APP_PASSWORD="$(read_env APP_PASSWORD)"
 APP_AUTH_SECRET="$(read_env APP_AUTH_SECRET)"
 MAX_RUNS_PER_SESSION="$(read_env MAX_RUNS_PER_SESSION)"
 MAX_RUNS_PER_DEPLOYMENT="$(read_env MAX_RUNS_PER_DEPLOYMENT)"
-DEMO_CREDENTIALS_PUBLIC="$(read_env DEMO_CREDENTIALS_PUBLIC)"
 
 for required in PROJECT GRAFANA_STACK_URL GRAFANA_SERVICE_ACCOUNT_TOKEN; do
     if [[ -z "${!required}" ]]; then
@@ -145,7 +144,7 @@ export RUNTIME_SA="${SA}"
 export GRAFANA_STACK_URL GRAFANA_OTLP_ENDPOINT_URL GRAFANA_OTLP_INSTANCE_ID
 # Non-secret settings. The password and signing key are not here: they travel
 # through Secret Manager above and are referenced, never passed.
-export APP_USERNAME MAX_RUNS_PER_SESSION MAX_RUNS_PER_DEPLOYMENT DEMO_CREDENTIALS_PUBLIC
+export APP_USERNAME MAX_RUNS_PER_SESSION MAX_RUNS_PER_DEPLOYMENT
 bash "${REPO_ROOT}/deploy/cloud-run-deploy.sh"
 
 URL="$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format='value(status.url)')"

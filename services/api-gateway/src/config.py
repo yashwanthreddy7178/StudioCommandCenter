@@ -43,14 +43,6 @@ class Settings(BaseSettings):
     tenant_lease_ttl_sec: float = 1200.0 # 20 minutes
     num_tenant_worlds: int = 24
 
-    # Whether the sign-in screen shows the credential it expects.
-    #
-    # For a public demo the login is a formality -- the password is published
-    # anyway -- and a judge arriving from a submission link should not have to
-    # hunt for it. Off by default so a deployment has to say yes: nothing should
-    # print its own password because someone forgot to turn a flag off.
-    demo_credentials_public: bool = False
-
     # Demo quota on investigation runs.
     #
     # Every run is a chain of model calls billed to whoever deployed this, and
