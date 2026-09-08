@@ -136,3 +136,50 @@ describe('useRunStream', () => {
     expect(result.current.isStreaming).toBe(false);
   });
 });
+
+describe('run completion', () => {
+  it('stops streaming when the run ends after verification', async () => {
+    // VERIFICATION used to close the stream server-side while the client kept
+    // waiting for a COMPLETED that never came, so the launch button stayed on
+    // "Investigating" for the rest of the session. The run now ends itself.
+    const { result } = renderHook(() => useRunStream('run-verified'));
+    const stream = FakeEventSource.instances[0];
+
+    stream.emit(event(1, 'PLAN'));
+    await waitFor(() => expect(result.current.isStreaming).toBe(true));
+
+    stream.emit(event(2, 'VERIFICATION', {
+      payload: { verification_impact: { is_remediated: true }, status: 'VERIFIED' },
+    }));
+
+    // Verification alone is not an ending: more events follow it.
+    await waitFor(() => expect(result.current.runState).toBe('VERIFYING'));
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.verificationImpact).not.toBeNull();
+
+    stream.emit(event(3, 'COMPLETED', { payload: { is_recovered: true } }));
+
+    await waitFor(() => expect(result.current.isStreaming).toBe(false));
+    expect(result.current.runState).toBe('COMPLETED');
+  });
+
+  it('also stops streaming when the fleet did not recover', async () => {
+    // The unhappy path ends too. DEGRADED cannot carry the ending -- it fires
+    // for a single failed tool call mid-run -- so COMPLETED is emitted either
+    // way and the recovery outcome rides in the payload.
+    const { result } = renderHook(() => useRunStream('run-partial'));
+    const stream = FakeEventSource.instances[0];
+
+    stream.emit(event(1, 'PLAN'));
+    stream.emit(event(2, 'VERIFICATION', {
+      payload: {
+        verification_impact: { is_remediated: false },
+        status: 'PARTIALLY_RECOVERED',
+      },
+    }));
+    stream.emit(event(3, 'COMPLETED', { payload: { is_recovered: false } }));
+
+    await waitFor(() => expect(result.current.isStreaming).toBe(false));
+    expect(result.current.verificationImpact?.is_remediated).toBe(false);
+  });
+});

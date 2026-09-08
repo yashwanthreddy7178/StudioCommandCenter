@@ -9,12 +9,12 @@ interface HypothesisPanelProps {
 export const HypothesisPanel: React.FC<HypothesisPanelProps> = ({ hypothesis }) => {
   if (!hypothesis) {
     return (
-      <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-lg flex flex-col justify-center items-center text-center py-12">
-        <Microscope className="w-8 h-8 text-slate-600 mb-2" />
-        <span className="text-sm font-semibold text-slate-400 font-mono">
+      <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-panel flex flex-col justify-center items-center text-center py-12">
+        <Microscope className="w-8 h-8 text-studio-fg4 mb-2" />
+        <span className="text-sm font-semibold text-studio-fg3 font-mono">
           Hypothesis Matrix Pending
         </span>
-        <p className="text-xs text-slate-500 max-w-sm mt-1">
+        <p className="text-xs text-studio-fg4 max-w-sm mt-1">
           Agent evaluates telemetry against falsifiable scientific criteria during investigation.
         </p>
       </div>
@@ -29,15 +29,15 @@ export const HypothesisPanel: React.FC<HypothesisPanelProps> = ({ hypothesis }) 
   const badge = {
     SUPPORTED: {
       label: 'REGRESSION CONFIRMED',
-      cls: 'bg-red-500/15 text-red-300 border-red-500/30',
+      cls: 'bg-studio-danger/15 text-studio-danger border-studio-danger/30',
     },
     REJECTED: {
       label: 'NO REGRESSION FOUND',
-      cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+      cls: 'bg-studio-success/15 text-studio-success border-studio-success/30',
     },
     INCONCLUSIVE: {
       label: 'INCONCLUSIVE',
-      cls: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+      cls: 'bg-studio-warning/15 text-studio-warning border-studio-warning/30',
     },
   }[verdict];
 
@@ -51,18 +51,18 @@ export const HypothesisPanel: React.FC<HypothesisPanelProps> = ({ hypothesis }) 
     (skipped.length > 0 ? `. Skipped: ${skipped.join(', ')}` : '');
 
   return (
-    <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-lg space-y-4">
+    <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-panel space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between pb-3 border-b border-studio-border/60">
         <div className="flex items-center space-x-2">
           <Microscope className="w-4 h-4 text-studio-cyan" />
-          <h3 className="text-sm font-semibold text-white uppercase font-mono tracking-wide">
+          <h3 className="text-sm font-semibold text-studio-fg uppercase font-mono tracking-wide">
             Falsifiable Hypothesis Scorecard
           </h3>
         </div>
         <div className="flex items-center space-x-2">
-          <span className="text-xs font-mono text-slate-400">
-            Score: <span className="text-white font-bold">{hypothesis.passed_count}/{hypothesis.total_tests}</span>
+          <span className="text-xs font-mono text-studio-fg3">
+            Score: <span className="text-studio-fg font-bold">{hypothesis.passed_count}/{hypothesis.total_tests}</span>
           </span>
           <span
             className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase border ${badge.cls}`}
@@ -74,7 +74,7 @@ export const HypothesisPanel: React.FC<HypothesisPanelProps> = ({ hypothesis }) 
       </div>
 
       {hypothesis.headline && (
-        <p className="text-sm text-slate-200 leading-relaxed">{hypothesis.headline}</p>
+        <p className="text-sm text-studio-fg leading-relaxed">{hypothesis.headline}</p>
       )}
 
       {/* Primary Hypothesis Summary */}
@@ -82,7 +82,7 @@ export const HypothesisPanel: React.FC<HypothesisPanelProps> = ({ hypothesis }) 
         <span className="text-[11px] font-mono text-studio-accent font-semibold block mb-1">
           Primary Root-Cause Hypothesis:
         </span>
-        <p className="text-xs text-slate-200 leading-relaxed font-medium">
+        <p className="text-xs text-studio-fg leading-relaxed font-medium">
           {hypothesis.primary_hypothesis}
         </p>
       </div>
@@ -100,43 +100,43 @@ export const HypothesisPanel: React.FC<HypothesisPanelProps> = ({ hypothesis }) 
               key={test.test_id}
               className={`border rounded-lg p-3 text-xs transition-all ${
                 isSkipped
-                  ? 'bg-slate-800/20 border-slate-600/30'
+                  ? 'bg-studio-card/60 border-studio-border/30'
                   : test.passed
-                  ? 'bg-emerald-950/10 border-emerald-500/30'
-                  : 'bg-red-950/10 border-red-500/30'
+                  ? 'bg-studio-success/10 border-studio-success/30'
+                  : 'bg-studio-danger/10 border-studio-danger/30'
               }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   {isSkipped ? (
-                    <MinusCircle className="w-4 h-4 text-slate-500 shrink-0" />
+                    <MinusCircle className="w-4 h-4 text-studio-fg4 shrink-0" />
                   ) : test.passed ? (
-                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <CheckCircle className="w-4 h-4 text-studio-success shrink-0" />
                   ) : (
-                    <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                    <XCircle className="w-4 h-4 text-studio-danger shrink-0" />
                   )}
                   <span
-                    className={`font-semibold ${isSkipped ? 'text-slate-300' : 'text-white'}`}
+                    className={`font-semibold ${isSkipped ? 'text-studio-fg2' : 'text-studio-fg'}`}
                   >
                     {test.name}
                   </span>
                   {isSkipped && (
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border border-slate-600/50 text-slate-400 uppercase tracking-wide">
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border border-studio-border/50 text-studio-fg3 uppercase tracking-wide">
                       Not applicable
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] font-mono text-slate-400">{test.evidence_source}</span>
+                <span className="text-[10px] font-mono text-studio-fg3">{test.evidence_source}</span>
               </div>
 
               {/* A skipped criterion has no evidence, so an empty quote would be
                   rendered as a pair of bare quotation marks. */}
               {test.evidence_snippet && (
-                <p className="text-[11px] mt-1.5 pl-6 font-mono text-emerald-300/90">
+                <p className="text-[11px] mt-1.5 pl-6 font-mono text-studio-success/90">
                   "{test.evidence_snippet}"
                 </p>
               )}
-              <p className="text-slate-400 text-[11px] mt-1 pl-6">
+              <p className="text-studio-fg3 text-[11px] mt-1 pl-6">
                 {test.explanation}
               </p>
             </div>

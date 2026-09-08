@@ -1,0 +1,201 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+  <style>
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+    a { color: #2563EB; } a:hover { color: #1D4ED8; }
+    .app { --bg:#F6F7F9; --surface:#FFFFFF; --card:#F2F4F7; --border:#DFE3EA;
+           --text:#10141C; --text2:#47505F; --text3:#6B7480;
+           --accent:#2563EB; --danger:#DC2626; --warn:#B45309; --ok:#059669; --cyan:#0891B2;
+           --danger-bg:#FEF2F2; --ok-bg:#ECFDF5; --warn-bg:#FFFBEB; --accent-bg:#EFF6FF;
+           --shadow: 0 1px 2px rgba(16,20,28,.05), 0 6px 20px rgba(16,20,28,.05); }
+    .app.dark { --bg:#0B0E14; --surface:#151922; --card:#1D222E; --border:#2A3245;
+           --text:#F1F5F9; --text2:#CBD5E1; --text3:#94A3B8;
+           --accent:#3B82F6; --danger:#EF4444; --warn:#F59E0B; --ok:#10B981; --cyan:#06B6D4;
+           --danger-bg:rgba(239,68,68,.10); --ok-bg:rgba(16,185,129,.10);
+           --warn-bg:rgba(245,158,11,.10); --accent-bg:rgba(59,130,246,.12);
+           --shadow: 0 1px 2px rgba(0,0,0,.45), 0 8px 24px rgba(0,0,0,.35); }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .ptitle { font-size: 11px; font-weight: 600; letter-spacing: .07em;
+              text-transform: uppercase; color: var(--text2); }
+  </style>
+</helmet>
+<div class="app {{themeClass}}" style="background: var(--bg); min-height: 100%; box-sizing: border-box; color: var(--text);">
+
+  <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;
+              padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border);">
+    <div style="display: flex; align-items: center; gap: 20px;">
+      <div style="font-size: 13px; font-weight: 700;">Studio Production Commander</div>
+      <div style="display: flex; align-items: center; gap: 14px;">
+        <sc-for list="{{strip}}" as="s" hint-placeholder-count="4">
+          <div style="display: flex; align-items: baseline; gap: 6px;">
+            <span class="mono" style="font-size: 9px; letter-spacing: .08em; color: var(--text3);">{{s.label}}</span>
+            <span class="mono" style="font-size: 13px; font-weight: 700; color: {{s.color}};">{{s.value}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span class="mono" style="font-size: 11px; color: var(--text3);">T01</span>
+      <div style="width: 30px; height: 28px; border-radius: 6px; border: 1px solid var(--border);
+                  background: var(--card); display: flex; align-items: center; justify-content: center;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{iconStroke}}" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px;
+                  background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
+        Launch agent
+      </div>
+    </div>
+  </div>
+
+  <div style="max-width: 940px; margin: 0 auto; padding: 26px 24px 40px;">
+
+    <div style="margin-bottom: 22px;">
+      <div class="mono" style="font-size: 10px; letter-spacing: .1em; color: var(--text3); margin-bottom: 7px;">
+        RUN-4C81AF92 · TENANT T01 · STARTED 17:41:24 UTC
+      </div>
+      <div style="font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; max-width: 720px;">
+        Will Shadow Protocol miss the 18:00 VFX delivery deadline?
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; margin-top: 12px;">
+        <span class="mono" style="font-size: 10px; font-weight: 700; padding: 4px 9px; border-radius: 5px;
+                    background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok);">SUPPORTED · 5 OF 6 TESTS</span>
+        <span class="mono" style="font-size: 10px; font-weight: 700; padding: 4px 9px; border-radius: 5px;
+                    background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger);">+47 MIN DELAY</span>
+        <span class="mono" style="font-size: 10px; color: var(--text3);">1,842 shots · 217 high priority</span>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 0;">
+      <div style="width: 22px; flex-shrink: 0; display: flex; justify-content: center; padding-top: 6px;">
+        <div style="width: 2px; background: var(--border); border-radius: 1px;"></div>
+      </div>
+
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px;">
+        <sc-for list="{{steps}}" as="s" hint-placeholder-count="5">
+          <div style="display: flex; gap: 14px; position: relative;">
+            <div style="position: absolute; left: -22px; top: 13px; width: 11px; height: 11px;
+                        border-radius: 50%; background: {{s.dot}}; border: 2px solid var(--bg);
+                        transform: translateX(-4px);"></div>
+            <div style="flex: 1; background: var(--surface); border: 1px solid {{s.border}};
+                        border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow);">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap;">
+                <span class="mono" style="font-size: 9px; font-weight: 700; color: var(--text3);">{{s.time}}</span>
+                <span style="font-size: 13px; font-weight: 600;">{{s.title}}</span>
+                <sc-if value="{{s.tool}}" hint-placeholder-val="{{true}}">
+                  <span class="mono" style="font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px;
+                              background: var(--accent-bg); color: var(--accent);">{{s.tool}}</span>
+                </sc-if>
+              </div>
+              <div style="font-size: 12px; color: var(--text2); line-height: 1.55;">{{s.body}}</div>
+              <sc-if value="{{s.figure}}" hint-placeholder-val="{{true}}">
+                <div class="mono" style="margin-top: 10px; padding: 10px 12px; border-radius: 7px;
+                            background: var(--card); border: 1px solid var(--border);
+                            font-size: 11px; color: var(--text2); line-height: 1.6;">{{s.figure}}</div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+
+        <div style="display: flex; gap: 14px; position: relative;">
+          <div style="position: absolute; left: -22px; top: 15px; width: 11px; height: 11px;
+                      border-radius: 50%; background: var(--warn); border: 2px solid var(--bg);
+                      transform: translateX(-4px);"></div>
+          <div style="flex: 1; background: var(--warn-bg); border: 1px solid var(--warn);
+                      border-radius: 10px; padding: 16px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+              <span style="font-size: 13px; font-weight: 700; color: var(--warn);">Human approval required</span>
+              <span class="mono" style="font-size: 9px; font-weight: 700; color: var(--warn);">NO ACTION TAKEN WITHOUT IT</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              <sc-for list="{{options}}" as="o" hint-placeholder-count="3">
+                <div style="display: flex; align-items: center; gap: 12px; padding: 11px 13px; border-radius: 8px;
+                            background: var(--surface); border: 1px solid {{o.border}};">
+                  <div style="flex: 1; min-width: 0;">
+                    <div style="font-size: 12px; font-weight: 600; margin-bottom: 2px;">{{o.title}}</div>
+                    <div style="font-size: 11px; color: var(--text2); line-height: 1.45;">{{o.consequence}}</div>
+                  </div>
+                  <span class="mono" style="font-size: 9px; font-weight: 700; padding: 3px 7px; border-radius: 4px;
+                              background: {{o.riskBg}}; color: {{o.riskFg}};">{{o.risk}}</span>
+                  <span class="mono" style="font-size: 11px; color: var(--text3); width: 46px; text-align: right;">{{o.eta}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = (this.props.theme ?? 'light') === 'dark';
+    const ok = dark ? '#10B981' : '#059669';
+    const bad = dark ? '#EF4444' : '#DC2626';
+    const warn = dark ? '#F59E0B' : '#B45309';
+    const border = dark ? '#2A3245' : '#DFE3EA';
+    const text = dark ? '#F1F5F9' : '#10141C';
+
+    return {
+      themeClass: dark ? 'dark' : '',
+      iconStroke: dark ? '#94A3B8' : '#6B7480',
+      strip: [
+        { label: 'FLEET', value: '6/8', color: warn },
+        { label: 'FPM', value: '15.3', color: warn },
+        { label: 'QUEUE', value: '2,800', color: text },
+        { label: 'DEADLINE', value: '18:00Z', color: bad },
+      ],
+      steps: [
+        {
+          time: '17:41:26', title: 'Investigation plan initialised', tool: '', dot: border, border,
+          body: 'Six falsifiable criteria to test against live Grafana telemetry. No conclusion is drawn from correlation alone.',
+          figure: '',
+        },
+        {
+          time: '17:41:31', title: 'Frame duration across the fleet', tool: 'query_prometheus', dot: bad, border: bad,
+          body: 'Two workers separated from the fleet by more than 2x. The split is by largest gap, not against a median, so it holds at any proportion.',
+          figure: 'w-03  142s   w-07  139s   ← degraded\nw-01   20s   w-02   26s   w-04 23s   w-05 25s   w-06 41s   w-08 23s',
+        },
+        {
+          time: '17:41:38', title: 'GPU utilisation on the same workers', tool: 'query_prometheus', dot: bad, border,
+          body: 'Utilisation collapsed while duration rose — the signature of stalling on memory, not saturating compute.',
+          figure: 'w-03  29%    w-07  30%     against a healthy median of 94%',
+        },
+        {
+          time: '17:41:44', title: 'Configuration change in Loki', tool: 'query_loki_logs', dot: ok, border,
+          body: 'A renderer_config_loaded line ten minutes before the degraded reading. The change precedes what it is suspected of causing.',
+          figure: 'event=renderer_config_loaded version=v2.4.1 tile_size=2048',
+        },
+        {
+          time: '17:41:52', title: 'Delivery impact projected', tool: 'impact-engine', dot: bad, border: bad,
+          body: 'Deterministic, not model arithmetic: queue depth over observed throughput, joined against the SQL deliverable deadline.',
+          figure: '2,800 frames ÷ 15.3 fpm = 183 min  →  01:08:47Z  vs  18:00:00Z deadline',
+        },
+      ],
+      options: [
+        { title: 'Rollback renderer configuration', eta: '~2 min', risk: 'LOW', border: ok,
+          riskBg: dark ? 'rgba(16,185,129,.10)' : '#ECFDF5', riskFg: ok,
+          consequence: 'Restores throughput to 18.5 fpm, clearing the projected 47 minute delay.' },
+        { title: 'Scale render farm by 4 nodes', eta: '~15 min', risk: 'MEDIUM', border,
+          riskBg: dark ? 'rgba(245,158,11,.10)' : '#FFFBEB', riskFg: warn,
+          consequence: 'Recovers part of the 3.2 fpm shortfall without changing renderer state.' },
+        { title: 'Reprioritise queue', eta: '~5 min', risk: 'LOW', border,
+          riskBg: dark ? 'rgba(16,185,129,.10)' : '#ECFDF5', riskFg: ok,
+          consequence: 'Protects SP_VFX_R04 by draining high-priority shots first, delaying the rest.' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

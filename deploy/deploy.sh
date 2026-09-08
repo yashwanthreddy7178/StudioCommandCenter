@@ -28,6 +28,17 @@ GRAFANA_OTLP_ENDPOINT_URL="$(read_env GRAFANA_OTLP_ENDPOINT_URL)"
 GRAFANA_OTLP_INSTANCE_ID="$(read_env GRAFANA_OTLP_INSTANCE_ID)"
 GRAFANA_ACCESS_POLICY_TOKEN="$(read_env GRAFANA_ACCESS_POLICY_TOKEN)"
 
+# Operator login and the demo quota. Read here so .env is the single source of
+# truth it claims to be: cloud-run-deploy.sh expands these from the environment,
+# so without exporting them a value set in .env was silently ignored and the
+# service deployed on the built-in defaults.
+APP_USERNAME="$(read_env APP_USERNAME)"
+APP_PASSWORD="$(read_env APP_PASSWORD)"
+APP_AUTH_SECRET="$(read_env APP_AUTH_SECRET)"
+MAX_RUNS_PER_SESSION="$(read_env MAX_RUNS_PER_SESSION)"
+MAX_RUNS_PER_DEPLOYMENT="$(read_env MAX_RUNS_PER_DEPLOYMENT)"
+DEMO_CREDENTIALS_PUBLIC="$(read_env DEMO_CREDENTIALS_PUBLIC)"
+
 for required in PROJECT GRAFANA_STACK_URL GRAFANA_SERVICE_ACCOUNT_TOKEN; do
     if [[ -z "${!required}" ]]; then
         echo "Missing ${required}. Fill it into .env (or export GOOGLE_CLOUD_PROJECT)."
@@ -106,6 +117,13 @@ put_secret() {
 put_secret spc-grafana-sa-token "${GRAFANA_SERVICE_ACCOUNT_TOKEN}"
 put_secret spc-grafana-otlp-token "${GRAFANA_ACCESS_POLICY_TOKEN}"
 
+# The operator credential is a secret like the Grafana tokens: referenced by the
+# service, never written into its description or the deploy command. An unset
+# value is skipped rather than blanked, so a deployment keeps whatever is already
+# in Secret Manager.
+put_secret spc-app-password "${APP_PASSWORD}"
+put_secret spc-app-auth-secret "${APP_AUTH_SECRET}"
+
 # --- build -------------------------------------------------------------------
 if [[ -z "${SKIP_BUILD:-}" ]]; then
     echo "==> building image with Cloud Build"
@@ -118,13 +136,16 @@ if [[ -z "${SKIP_BUILD:-}" ]]; then
 fi
 
 # --- deploy ------------------------------------------------------------------
-# Delegated to the shared step so that the local path and the GitHub Actions
-# workflow deploy with identical flags. Those flags are load-bearing -- see the
-# comments in cloud-run-deploy.sh -- and two copies would drift.
+# Delegated to a shared step rather than inlined here: the flags are
+# load-bearing -- see the comments in cloud-run-deploy.sh -- and a second copy
+# would drift from them.
 echo "==> deploying"
 export IMAGE REGION SERVICE PROJECT
 export RUNTIME_SA="${SA}"
 export GRAFANA_STACK_URL GRAFANA_OTLP_ENDPOINT_URL GRAFANA_OTLP_INSTANCE_ID
+# Non-secret settings. The password and signing key are not here: they travel
+# through Secret Manager above and are referenced, never passed.
+export APP_USERNAME MAX_RUNS_PER_SESSION MAX_RUNS_PER_DEPLOYMENT DEMO_CREDENTIALS_PUBLIC
 bash "${REPO_ROOT}/deploy/cloud-run-deploy.sh"
 
 URL="$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format='value(status.url)')"

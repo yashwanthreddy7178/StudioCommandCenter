@@ -125,7 +125,15 @@ async def test_operator_login_gates_the_exposed_routes():
         assert (await client.get("/leases", headers=headers)).status_code == 200
 
         # A token with a broken signature proves nothing.
-        forged = {"Authorization": f"Bearer {token[:-1]}0"}
+        #
+        # Tampered by flipping the last character to one it is not. Appending a
+        # fixed "0" looked equivalent but was not: the signature is a hex digest,
+        # so roughly one run in sixteen produced one already ending in "0" and
+        # the "forged" token was byte-identical to the real one -- a 6% flake
+        # that only ever appeared in a full-suite run.
+        tampered = token[:-1] + ("1" if token[-1] == "0" else "0")
+        assert tampered != token
+        forged = {"Authorization": f"Bearer {tampered}"}
         assert (await client.get("/leases", headers=forged)).status_code == 401
 
         # EventSource cannot set headers, so the SSE path may present the token
@@ -395,3 +403,146 @@ async def test_tenants_endpoint_counts_the_pool_and_observers():
     assert sum(1 for lease in active if lease.is_observer) == 2
     # Observers do not consume a writable world.
     assert len({lease.tenant_id for lease in active if not lease.is_observer}) == total
+
+
+@pytest.mark.asyncio
+async def test_run_quota_caps_investigations_per_session_and_deployment():
+    """Verify the demo budget holds and explains itself.
+
+    Every investigation is a chain of model calls billed to whoever deployed
+    this, and the service is published with a public link. Nothing else caps it:
+    the MCP gateway's token bucket protects Grafana's quota, not model spend.
+    """
+    from src.quota import RunQuota
+
+    quota = RunQuota(per_session=2, per_deployment=3, window_sec=3600.0)
+
+    # A session gets its allowance, then is told it is its own doing.
+    assert await quota.reserve("sess-a") is None
+    assert await quota.reserve("sess-a") is None
+    hit = await quota.reserve("sess-a")
+    assert hit is not None and hit.scope == "session"
+    assert hit.retry_after_sec > 0
+    assert "per-session demo limit" in hit.detail
+
+    # A different visitor is unaffected by the first one's exhaustion...
+    assert await quota.reserve("sess-b") is None
+    # ...until the shared ceiling is reached, which is the one protecting the bill.
+    shared = await quota.reserve("sess-b")
+    assert shared is not None and shared.scope == "global"
+    assert "budget" in shared.detail
+
+
+@pytest.mark.asyncio
+async def test_a_failed_dispatch_does_not_consume_quota():
+    """Verify an outage cannot quietly spend the demo's budget.
+
+    The run never reached the worker, so it never cost anything.
+    """
+    from src.quota import RunQuota
+
+    quota = RunQuota(per_session=1, per_deployment=5, window_sec=3600.0)
+
+    assert await quota.reserve("sess-x") is None
+    await quota.refund("sess-x")
+    # The slot came back, so the next attempt is allowed.
+    assert await quota.reserve("sess-x") is None
+
+
+@pytest.mark.asyncio
+async def test_run_quota_can_be_switched_off_for_local_use():
+    """Verify a zero limit disables the ceiling rather than blocking everything."""
+    from src.quota import RunQuota
+
+    off = RunQuota(per_session=0, per_deployment=0, window_sec=3600.0)
+    assert off.enabled is False
+    for _ in range(50):
+        assert await off.reserve("sess-local") is None
+
+
+@pytest.mark.asyncio
+async def test_exhausted_run_returns_429_with_retry_after():
+    """Verify the endpoint refuses with a retryable status, not a generic error."""
+    from src.quota import run_quota
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=_auth()
+    ) as client:
+        lease = (await client.post(
+            "/leases/acquire", json={"session_id": "sess-greedy"}
+        )).json()
+
+        # Fill this session's allowance directly, so the test does not depend on
+        # the configured number.
+        for _ in range(settings.max_runs_per_session):
+            await run_quota.reserve("sess-greedy")
+
+        res = await client.post("/runs", json={
+            "tenant_id": lease["tenant_id"],
+            "session_id": "sess-greedy",
+            "user_id": "usr-supervisor",
+        })
+
+        assert res.status_code == 429
+        assert res.headers.get("Retry-After")
+        assert int(res.headers["Retry-After"]) > 0
+        assert "demo limit" in res.json()["detail"]
+
+        # The status endpoint reports the same picture.
+        snapshot = (await client.get("/quota")).json()
+        assert snapshot["enabled"] is True
+        assert snapshot["limit_per_session"] == settings.max_runs_per_session
+
+
+@pytest.mark.asyncio
+async def test_demo_credentials_are_published_only_when_asked_for(monkeypatch):
+    """Verify a deployment never prints its own password unless it opted in.
+
+    The sign-in screen shows the credential for a public demo, but it is served
+    rather than compiled in so it cannot go stale after a rotation -- and it has
+    to be opted into, so a private instance cannot publish itself by omission.
+
+    The flag is set explicitly rather than left at its default: settings are read
+    from .env, so a developer who turned this on for their own demo would
+    otherwise see this test fail on a machine that is configured exactly as
+    intended.
+    """
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "demo_credentials_public", False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Reachable without a token: it is read before anyone can sign in.
+        res = await client.get("/auth/demo-credentials")
+        assert res.status_code == 200
+
+        body = res.json()
+        assert body["published"] is False
+        # Nothing that could be a credential rides along with the refusal.
+        assert "password" not in body
+        assert "username" not in body
+
+
+@pytest.mark.asyncio
+async def test_published_demo_credentials_match_what_the_login_accepts(monkeypatch):
+    """Verify a published credential is the one that actually works.
+
+    A screen showing a password the server will reject is worse than a screen
+    showing none, so the endpoint reads the same environment the check does.
+    """
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "demo_credentials_public", True)
+    monkeypatch.setenv("APP_USERNAME", "demo-operator")
+    monkeypatch.setenv("APP_PASSWORD", "a-published-demo-password")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        published = (await client.get("/auth/demo-credentials")).json()
+        assert published["published"] is True
+
+        signed_in = await client.post("/auth/login", json={
+            "username": published["username"],
+            "password": published["password"],
+        })
+        assert signed_in.status_code == 200
+        assert signed_in.json()["token"]

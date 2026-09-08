@@ -1,0 +1,233 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+  <style>
+    body { margin: 0; font-family: 'JetBrains Mono', monospace; }
+    a { color: #2563EB; } a:hover { color: #1D4ED8; }
+    .app { --bg:#F6F7F9; --surface:#FFFFFF; --card:#F2F4F7; --border:#DFE3EA;
+           --text:#10141C; --text2:#47505F; --text3:#6B7480;
+           --accent:#2563EB; --danger:#DC2626; --warn:#B45309; --ok:#059669; --cyan:#0891B2;
+           --danger-bg:#FEF2F2; --ok-bg:#ECFDF5; --warn-bg:#FFFBEB; --accent-bg:#EFF6FF; }
+    .app.dark { --bg:#0B0E14; --surface:#151922; --card:#1D222E; --border:#2A3245;
+           --text:#F1F5F9; --text2:#CBD5E1; --text3:#94A3B8;
+           --accent:#3B82F6; --danger:#EF4444; --warn:#F59E0B; --ok:#10B981; --cyan:#06B6D4;
+           --danger-bg:rgba(239,68,68,.12); --ok-bg:rgba(16,185,129,.12);
+           --warn-bg:rgba(245,158,11,.12); --accent-bg:rgba(59,130,246,.14); }
+    .sans { font-family: Inter, system-ui, sans-serif; }
+    .cell { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; }
+    .hdr { font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+           color: var(--text3); padding: 5px 8px; border-bottom: 1px solid var(--border);
+           display: flex; align-items: center; justify-content: space-between; }
+    .big { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+  </style>
+</helmet>
+<div class="app {{themeClass}}" style="background: var(--bg); min-height: 100%; box-sizing: border-box;
+     color: var(--text); padding: 8px; display: flex; flex-direction: column; gap: 8px;">
+
+  <div style="display: flex; align-items: center; gap: 10px; padding: 5px 8px;
+              background: var(--surface); border: 1px solid var(--border); border-radius: 4px;">
+    <span style="font-size: 11px; font-weight: 700; letter-spacing: -0.01em;">SPC</span>
+    <span style="width: 1px; height: 12px; background: var(--border);"></span>
+    <span style="font-size: 10px; color: var(--text3);">t01</span>
+    <span style="font-size: 10px; color: var(--text3);">18/24</span>
+    <span style="width: 1px; height: 12px; background: var(--border);"></span>
+    <span style="font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 3px;
+                 background: var(--danger-bg); color: var(--danger);">INCIDENT v2.4.1</span>
+    <span style="font-size: 10px; color: var(--text3);">run-4c81af92</span>
+    <span style="font-size: 10px; color: var(--ok);">● sse</span>
+    <span style="flex: 1;"></span>
+    <sc-for list="{{kpis}}" as="k" hint-placeholder-count="5">
+      <div style="display: flex; align-items: baseline; gap: 4px;">
+        <span style="font-size: 9px; color: var(--text3);">{{k.label}}</span>
+        <span style="font-size: 11px; font-weight: 700; color: {{k.color}};">{{k.value}}</span>
+      </div>
+    </sc-for>
+    <span style="width: 1px; height: 12px; background: var(--border);"></span>
+    <span style="font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 3px;
+                 background: var(--accent); color: #fff;">LAUNCH</span>
+    <span style="font-size: 10px; font-weight: 600; padding: 3px 7px; border-radius: 3px;
+                 border: 1px solid var(--border); color: var(--text2);">{{themeLabel}}</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;">
+    <sc-for list="{{tiles}}" as="t" hint-placeholder-count="4">
+      <div class="cell" style="border-color: {{t.border}};">
+        <div class="hdr"><span>{{t.label}}</span><span style="color: {{t.color}};">{{t.tag}}</span></div>
+        <div style="padding: 9px 8px;">
+          <div class="big" style="color: {{t.color}};">{{t.value}}</div>
+          <div style="font-size: 9px; color: var(--text3); margin-top: 3px;">{{t.sub}}</div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr); gap: 8px; flex: 1;">
+
+    <div class="cell" style="display: flex; flex-direction: column;">
+      <div class="hdr"><span>Worker fleet</span><span>2 degraded / 8</span></div>
+      <div style="display: grid; grid-template-columns: 34px 1fr 38px 42px 44px;
+                  padding: 4px 8px; font-size: 9px; color: var(--text3); border-bottom: 1px solid var(--border);">
+        <span>ID</span><span>GPU</span><span style="text-align:right">UTIL</span>
+        <span style="text-align:right">FRAME</span><span style="text-align:right">VER</span>
+      </div>
+      <sc-for list="{{workers}}" as="w" hint-placeholder-count="8">
+        <div style="display: grid; grid-template-columns: 34px 1fr 38px 42px 44px; align-items: center;
+                    padding: 6px 8px; font-size: 10px; background: {{w.bg}};
+                    border-bottom: 1px solid var(--border);">
+          <span style="font-weight: 700;">{{w.id}}</span>
+          <span style="color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{w.gpu}}</span>
+          <span style="text-align: right; font-weight: 600; color: {{w.color}};">{{w.gpuPct}}</span>
+          <span style="text-align: right; font-weight: 600; color: {{w.color}};">{{w.dur}}</span>
+          <span style="text-align: right; color: {{w.verFg}}; font-weight: 600;">{{w.ver}}</span>
+        </div>
+      </sc-for>
+      <div style="flex: 1;"></div>
+      <div style="padding: 6px 8px; font-size: 9px; color: var(--text3); border-top: 1px solid var(--border);">
+        split by largest multiplicative gap · factor 2.0
+      </div>
+    </div>
+
+    <div class="cell" style="display: flex; flex-direction: column;">
+      <div class="hdr"><span>Evidence ledger</span><span>23 steps</span></div>
+      <div style="flex: 1; display: flex; flex-direction: column;">
+        <sc-for list="{{events}}" as="e" hint-placeholder-count="7">
+          <div style="padding: 6px 8px; border-bottom: 1px solid var(--border);
+                      display: flex; gap: 7px; align-items: baseline;">
+            <span style="font-size: 9px; color: var(--text3); width: 20px; flex-shrink: 0;">{{e.n}}</span>
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-size: 10px; color: var(--accent); font-weight: 600;">{{e.tool}}</div>
+              <div class="sans" style="font-size: 10px; color: var(--text2); line-height: 1.4; margin-top: 1px;">{{e.desc}}</div>
+            </div>
+            <span style="font-size: 9px; color: {{e.msColor}}; flex-shrink: 0;">{{e.ms}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div class="cell" style="flex: 1; display: flex; flex-direction: column;">
+        <div class="hdr"><span>Hypothesis</span><span style="color: var(--ok);">5/6 SUPPORTED</span></div>
+        <sc-for list="{{tests}}" as="t" hint-placeholder-count="6">
+          <div style="display: flex; align-items: center; gap: 7px; padding: 6px 8px;
+                      border-bottom: 1px solid var(--border);">
+            <span style="width: 4px; height: 12px; border-radius: 1px; background: {{t.color}};"></span>
+            <span class="sans" style="font-size: 10px; flex: 1;">{{t.name}}</span>
+            <span style="font-size: 9px; color: var(--text3);">{{t.src}}</span>
+          </div>
+        </sc-for>
+        <div style="flex: 1;"></div>
+      </div>
+
+      <div class="cell">
+        <div class="hdr"><span>MCP gateway</span><span>cap 25.0 qps</span></div>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--border);">
+          <sc-for list="{{mcp}}" as="m" hint-placeholder-count="4">
+            <div style="background: var(--surface); padding: 7px 8px;">
+              <div style="font-size: 9px; color: var(--text3);">{{m.label}}</div>
+              <div style="font-size: 14px; font-weight: 700; color: {{m.color}};">{{m.value}}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div class="cell" style="border-color: var(--warn); background: var(--warn-bg);">
+        <div style="padding: 9px; display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 10px; font-weight: 700; color: var(--warn); flex: 1;">APPROVAL REQUIRED · 3 OPTIONS</span>
+          <span style="font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 3px;
+                       background: var(--warn); color: #fff;">REVIEW</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = (this.props.theme ?? 'light') === 'dark';
+    const ok = dark ? '#10B981' : '#059669';
+    const bad = dark ? '#EF4444' : '#DC2626';
+    const warn = dark ? '#F59E0B' : '#B45309';
+    const text = dark ? '#F1F5F9' : '#10141C';
+    const text3 = dark ? '#94A3B8' : '#6B7480';
+    const border = dark ? '#2A3245' : '#DFE3EA';
+    const badBg = dark ? 'rgba(239,68,68,.12)' : '#FEF2F2';
+    const accent = dark ? '#3B82F6' : '#2563EB';
+    const violet = dark ? '#8B5CF6' : '#7C3AED';
+    const cyan = dark ? '#06B6D4' : '#0891B2';
+
+    const spec = [
+      ['w-01', 'RTX 4090', '94%', '20s', false],
+      ['w-02', 'A100-SXM4-80GB', '94%', '26s', false],
+      ['w-03', 'RTX 3080', '29%', '142s', true],
+      ['w-04', 'RTX 4090', '94%', '23s', false],
+      ['w-05', 'A100-SXM4-80GB', '91%', '25s', false],
+      ['w-06', 'RTX 3080', '97%', '41s', false],
+      ['w-07', 'RTX 4090', '30%', '139s', true],
+      ['w-08', 'A100-SXM4-80GB', '93%', '23s', false],
+    ];
+
+    return {
+      themeClass: dark ? 'dark' : '',
+      themeLabel: dark ? 'DARK' : 'LIGHT',
+      kpis: [
+        { label: 'fpm', value: '15.3', color: warn },
+        { label: 'base', value: '18.5', color: text3 },
+        { label: 'queue', value: '2800', color: text },
+        { label: 'delay', value: '+47m', color: bad },
+        { label: 'conf', value: '5/6', color: ok },
+      ],
+      tiles: [
+        { label: 'Target deadline', tag: 'SP_VFX_R04', value: '18:00:00', sub: 'UTC · hard delivery lock',
+          color: text, border },
+        { label: 'Projected completion', tag: 'MISSES', value: '01:08:47', sub: 'UTC · 08 Sep',
+          color: bad, border: bad },
+        { label: 'Delivery status', tag: '+47m', value: '1,842', sub: 'shots affected · 217 high priority',
+          color: bad, border: bad },
+        { label: 'Fleet throughput', tag: 'DEGRADED', value: '15.3 fpm', sub: 'baseline 18.5 · 2 nodes down',
+          color: warn, border },
+      ],
+      workers: spec.map(([id, gpu, gpuPct, dur, sick]) => ({
+        id, gpu, gpuPct, dur,
+        bg: sick ? badBg : 'transparent',
+        color: sick ? bad : ok,
+        ver: sick ? '2.4.1' : '2.4.0',
+        verFg: sick ? bad : text3,
+      })),
+      events: [
+        { n: '17', tool: 'query_prometheus', ms: '2696ms', msColor: warn, desc: 'per-worker GPU utilisation' },
+        { n: '18', tool: 'tempo_traceql-search', ms: '481ms', msColor: text3, desc: 'frame spans, time distribution' },
+        { n: '19', tool: 'query_loki_logs', ms: '204ms', msColor: text3, desc: 'renderer_config_loaded, v2.4.1' },
+        { n: '20', tool: 'query_prometheus', ms: '38ms', msColor: ok, desc: 'throughput — cache hit' },
+        { n: '21', tool: 'impact-engine', ms: '112ms', msColor: text3, desc: '5 of 6 criteria satisfied' },
+        { n: '22', tool: 'impact-engine', ms: '96ms', msColor: text3, desc: 'projected delay 47 min' },
+        { n: '23', tool: 'agent-worker', ms: '12ms', msColor: ok, desc: '3 ranked options proposed' },
+      ],
+      tests: [
+        { name: 'Temporal precedence', src: 'loki', color: ok },
+        { name: 'Metric correlation', src: 'prom', color: ok },
+        { name: 'Mechanism verification', src: 'prom', color: ok },
+        { name: 'Fleet localization', src: 'prom', color: ok },
+        { name: 'Trace attribution', src: 'tempo', color: ok },
+        { name: 'Control group stability', src: 'prom', color: bad },
+      ],
+      mcp: [
+        { label: 'cache hit', value: '91.4%', color: ok },
+        { label: 'coalesced', value: '3', color: cyan },
+        { label: 'logical', value: '38', color: text },
+        { label: 'upstream', value: '3', color: violet },
+      ],
+      accent,
+    };
+  }
+}
+</script>
+</body>
+</html>

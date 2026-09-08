@@ -1,6 +1,7 @@
 """FastAPI application entrypoint for api-gateway."""
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 import httpx
@@ -9,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from src.config import settings
 from src.lease import lease_manager
+from src.quota import run_quota
 from services.common.models import ApprovalRequest, RunDocument, TenantLease
 from services.common.auth import (
     internal_auth,
@@ -68,6 +70,25 @@ async def login(req: LoginRequest) -> Dict[str, Any]:
     token, expires_at = issue_token(req.username)
     logger.info("Operator signed in", extra={"username": req.username})
     return {"token": token, "expires_at": expires_at}
+
+
+@app.get("/auth/demo-credentials", response_model=Dict[str, Any])
+async def demo_credentials() -> Dict[str, Any]:
+    """The credential to show on the sign-in screen, when there is one to show.
+
+    Served rather than compiled into the page so it cannot go stale: the public
+    deployment is expected to run a rotated password, and a screen that
+    confidently displays the old one is worse than a screen that displays
+    nothing. `published: false` is the honest answer for every deployment that
+    has not opted in, and it carries no password with it.
+    """
+    if not settings.demo_credentials_public:
+        return {"published": False}
+    return {
+        "published": True,
+        "username": os.environ.get("APP_USERNAME", "supervisor"),
+        "password": os.environ.get("APP_PASSWORD", "shadow-protocol"),
+    }
 
 
 class LeaseAcquireRequest(BaseModel):
@@ -139,6 +160,12 @@ async def release_lease(req: LeaseHeartbeatRequest) -> Dict[str, Any]:
     return {"success": success, "tenant_id": req.tenant_id}
 
 
+@app.get("/quota", response_model=Dict[str, Any])
+async def get_quota() -> Dict[str, Any]:
+    """Reports how much of the shared investigation budget is left."""
+    return await run_quota.snapshot()
+
+
 @app.get("/tenants", response_model=Dict[str, Any])
 async def list_tenants() -> Dict[str, Any]:
     """Lists the tenant worlds and which are currently taken.
@@ -196,6 +223,21 @@ async def _require_lease(tenant_id: str, session_id: str) -> None:
 async def create_run(req: CreateRunRequest) -> Dict[str, Any]:
     """Creates an investigation run and dispatches to agent-worker."""
     await _require_lease(req.tenant_id, req.session_id)
+
+    # Checked after the lease so a caller acting on someone else's world is
+    # refused without spending a slot they were never entitled to.
+    exceeded = await run_quota.reserve(req.session_id)
+    if exceeded is not None:
+        logger.warning(
+            "Run refused by demo quota",
+            extra={"scope": exceeded.scope, "session_id": req.session_id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=exceeded.detail,
+            headers={"Retry-After": str(exceeded.retry_after_sec)},
+        )
+
     run_id = f"run-{uuid.uuid4().hex[:8]}"
 
     # Dispatch to agent-worker
@@ -211,6 +253,9 @@ async def create_run(req: CreateRunRequest) -> Dict[str, Any]:
         res = await http_client.post(f"{settings.agent_worker_url}/runs/investigate", json=worker_payload)
         res.raise_for_status()
     except Exception as exc:
+        # The run never started, so it never cost anything: give the slot back
+        # rather than letting an outage quietly spend the demo's budget.
+        await run_quota.refund(req.session_id)
         # Returning QUEUED here would leave the client waiting on an event stream
         # that no worker is ever going to write to.
         logger.error("Worker dispatch failed", extra={"run_id": run_id, "error": str(exc)})

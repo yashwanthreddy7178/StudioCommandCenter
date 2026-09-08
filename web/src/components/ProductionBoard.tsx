@@ -56,15 +56,15 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({
   return (
     <div className="space-y-6">
       {/* Sequences Board */}
-      <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-lg">
+      <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-panel">
         <div className="flex items-center justify-between pb-3 border-b border-studio-border/60">
           <div className="flex items-center space-x-2">
             <Layers className="w-4 h-4 text-studio-cyan" />
-            <h3 className="text-sm font-semibold text-white uppercase font-mono tracking-wide">
+            <h3 className="text-sm font-semibold text-studio-fg uppercase font-mono tracking-wide">
               Production Sequences & Shots: Shadow Protocol
             </h3>
           </div>
-          <span className="text-xs font-mono text-slate-400">
+          <span className="text-xs font-mono text-studio-fg3">
             Total Shots: {sequences.reduce((n, s) => n + s.total_shots, 0).toLocaleString() || "—"}
           </span>
         </div>
@@ -77,38 +77,38 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({
               key={seq.sequence_id}
               className={`border rounded-lg p-4 bg-studio-card/60 transition-all ${
                 isAffected
-                  ? 'border-red-500/40 bg-red-950/10'
+                  ? 'border-studio-danger/40 bg-studio-danger/10'
                   : 'border-studio-border/60 hover:border-studio-accent/40'
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-sm text-white">{seq.name}</span>
+                <span className="font-semibold text-sm text-studio-fg">{seq.name}</span>
                 <span
                   className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
                     seq.priority === 'HIGH'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'bg-slate-700 text-slate-300'
+                      ? 'bg-studio-warning/20 text-studio-warning border border-studio-warning/30'
+                      : 'bg-studio-border text-studio-fg2'
                   }`}
                 >
                   {seq.priority} PRIORITY
                 </span>
               </div>
 
-              <div className="mt-3 flex items-center justify-between text-xs font-mono text-slate-400">
+              <div className="mt-3 flex items-center justify-between text-xs font-mono text-studio-fg3">
                 <span>{seq.total_shots.toLocaleString()} shots</span>
-                <span className="text-slate-300 font-medium">{seq.deliverables.join(', ') || '—'}</span>
+                <span className="text-studio-fg2 font-medium">{seq.deliverables.join(', ') || '—'}</span>
               </div>
 
               {/* Progress Bar */}
               <div className="mt-3">
-                <div className="flex justify-between text-[11px] font-mono text-slate-400 mb-1">
+                <div className="flex justify-between text-[11px] font-mono text-studio-fg3 mb-1">
                   <span>Progress</span>
-                  <span className="text-white font-bold">{seq.progress_pct}%</span>
+                  <span className="text-studio-fg font-bold">{seq.progress_pct}%</span>
                 </div>
                 <div className="w-full bg-studio-bg rounded-full h-1.5 overflow-hidden">
                   <div
                     className={`h-1.5 rounded-full transition-all duration-500 ${
-                      isAffected ? 'bg-red-500' : 'bg-studio-accent'
+                      isAffected ? 'bg-studio-danger' : 'bg-studio-accent'
                     }`}
                     style={{ width: `${seq.progress_pct}%` }}
                   />
@@ -121,16 +121,16 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({
       </div>
 
       {/* Render Farm Worker Fleet */}
-      <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-lg">
+      <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-panel">
         <div className="flex items-center justify-between pb-3 border-b border-studio-border/60">
           <div className="flex items-center space-x-2">
             <Server className="w-4 h-4 text-studio-cyan" />
-            <h3 className="text-sm font-semibold text-white uppercase font-mono tracking-wide">
+            <h3 className="text-sm font-semibold text-studio-fg uppercase font-mono tracking-wide">
               Active Render Worker Fleet ({workers.length} Nodes)
             </h3>
           </div>
-          <span className="text-xs font-mono text-slate-400">
-            Renderer Target: <span className="text-white font-bold">{world?.renderer_version ?? 'v2.4.0'}</span> (tile_size={world?.tile_size ?? 256})
+          <span className="text-xs font-mono text-studio-fg3">
+            Renderer Target: <span className="text-studio-fg font-bold">{world?.renderer_version ?? 'v2.4.0'}</span> (tile_size={world?.tile_size ?? 256})
           </span>
         </div>
 
@@ -142,40 +142,40 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({
                 key={w.worker_id}
                 className={`p-3 rounded-lg border flex flex-col justify-between transition-all ${
                   isDegraded
-                    ? 'bg-red-950/20 border-red-500/50 shadow-sm shadow-red-500/20'
+                    ? 'bg-studio-danger/20 border-studio-danger/50 shadow-sm shadow-studio-danger/20'
                     : 'bg-studio-card/80 border-studio-border/60'
                 }`}
               >
                 <div>
                   <div className="flex items-center justify-between">
-                    <span className="font-mono font-bold text-xs text-white">{w.worker_id}</span>
+                    <span className="font-mono font-bold text-xs text-studio-fg">{w.worker_id}</span>
                     {isDegraded ? (
-                      <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+                      <AlertTriangle className="w-3.5 h-3.5 text-studio-danger" />
                     ) : (
-                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                      <CheckCircle className="w-3.5 h-3.5 text-studio-success" />
                     )}
                   </div>
-                  <span className="text-[10px] text-slate-400 font-mono block mt-0.5 truncate">
+                  <span className="text-[10px] text-studio-fg3 font-mono block mt-0.5 truncate">
                     {w.gpu_type?.replace('NVIDIA ', '') ?? 'unknown GPU'}
                   </span>
                 </div>
 
                 <div className="my-2 space-y-1 font-mono text-[10px]">
                   <div className="flex justify-between">
-                    <span className="text-slate-400">GPU:</span>
+                    <span className="text-studio-fg3">GPU:</span>
                     <span
                       className={`font-bold ${
-                        (w.gpu_utilization_pct ?? 100) < 50 ? 'text-red-400' : 'text-slate-200'
+                        (w.gpu_utilization_pct ?? 100) < 50 ? 'text-studio-danger' : 'text-studio-fg'
                       }`}
                     >
                       {w.gpu_utilization_pct?.toFixed(0) ?? '--'}%
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Time:</span>
+                    <span className="text-studio-fg3">Time:</span>
                     <span
                       className={`font-bold ${
-                        (w.current_frame_duration_sec ?? 0) > 60 ? 'text-red-400 font-extrabold' : 'text-slate-200'
+                        (w.current_frame_duration_sec ?? 0) > 60 ? 'text-studio-danger font-extrabold' : 'text-studio-fg'
                       }`}
                     >
                       {w.current_frame_duration_sec?.toFixed(0) ?? '--'}s
@@ -186,7 +186,7 @@ export const ProductionBoard: React.FC<ProductionBoardProps> = ({
                 <div className="pt-1.5 border-t border-studio-border/40 text-[9px] font-mono text-center">
                   <span
                     className={`px-1.5 py-0.5 rounded font-semibold ${
-                      isDegraded ? 'bg-red-500/30 text-red-300' : 'bg-slate-700 text-slate-300'
+                      isDegraded ? 'bg-studio-danger/30 text-studio-danger' : 'bg-studio-border text-studio-fg2'
                     }`}
                   >
                     {w.renderer_version}

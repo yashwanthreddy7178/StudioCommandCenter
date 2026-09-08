@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.config import settings
 from src.main import app
+import src.sse as sse_module
 from src.sse import event_generator
 
 
@@ -73,13 +74,21 @@ async def test_healthz_and_readyz():
 
 
 @pytest.mark.asyncio
-async def test_stream_connection_header(short_stream):
+async def test_stream_connection_header(short_stream, monkeypatch):
     """The SSE endpoint answers with an event-stream content type, and closes.
 
     Bounded deliberately. The generator's only exit used to be the client going
     away, and an ASGI transport never delivers that signal, so leaving the
     request open here hung the whole suite instead of failing it.
+
+    The upstream is stubbed rather than left to a real agent-worker. Without
+    that this test quietly depended on a service being up on localhost: it
+    passed on a developer machine running the stack and hung everywhere else,
+    including CI, where the connection error sent every iteration to the retry
+    path instead of the duration ceiling.
     """
+    monkeypatch.setattr(sse_module.httpx, "AsyncClient", lambda *a, **k: _FakeClient([]))
+
     async def _open_and_read() -> str:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test", headers=_auth()
@@ -140,3 +149,43 @@ async def test_approval_does_not_close_the_stream(monkeypatch, short_stream):
     # It ends only because the ceiling is short here, not because of the approval.
     assert "APPROVAL_REQUIRED" in joined
     assert "STREAM_TIMEOUT" in joined
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_even_when_agent_worker_is_unreachable(short_stream, monkeypatch):
+    """The duration ceiling has to hold when the upstream is down.
+
+    It used to sit after the fetch, inside the try. A connection error sent
+    every iteration to the retry handler, which sleeps a second and loops, so
+    the ceiling was never evaluated: the stream stayed open until the client
+    went away. Under Cloud Run's 3600s request timeout that is an hour of held
+    connection per browser -- and the service that would have ended it is
+    precisely the one that is down.
+    """
+    class _FailingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):
+            raise ConnectionError("agent-worker is down")
+
+    monkeypatch.setattr(sse_module.httpx, "AsyncClient", lambda *a, **k: _FailingClient())
+
+    async def _open_and_read() -> str:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=_auth()
+        ) as client:
+            async with client.stream("GET", "/runs/run-down/events") as response:
+                assert response.status_code == 200
+                return "".join([chunk async for chunk in response.aiter_text()])
+
+    # The ceiling is 1s under this fixture; 15s is generous and still far below
+    # the minutes this took before.
+    body = await asyncio.wait_for(_open_and_read(), timeout=15)
+
+    assert "CONNECTED" in body
+    # It closes by stating why, rather than by being cut off.
+    assert "STREAM_TIMEOUT" in body

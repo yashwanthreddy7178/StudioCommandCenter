@@ -33,17 +33,17 @@ export class PanelBoundary extends React.Component<PanelBoundaryProps, PanelBoun
     if (!this.state.error) return this.props.children;
 
     return (
-      <div className="bg-studio-surface border border-amber-500/40 rounded-xl p-4">
+      <div className="bg-studio-surface border border-studio-warning/40 rounded-xl p-4">
         <div className="flex items-center space-x-2">
-          <AlertTriangle className="w-4 h-4 text-amber-400" />
-          <span className="text-sm font-semibold text-amber-300">
+          <AlertTriangle className="w-4 h-4 text-studio-warning" />
+          <span className="text-sm font-semibold text-studio-warning">
             {this.props.name} could not render
           </span>
         </div>
-        <p className="text-xs text-slate-400 font-mono mt-2 break-words">
+        <p className="text-xs text-studio-fg3 font-mono mt-2 break-words">
           {this.state.error.message}
         </p>
-        <p className="text-[11px] text-slate-500 mt-2">
+        <p className="text-[11px] text-studio-fg4 mt-2">
           The rest of the dashboard is unaffected. Details are in the browser console.
         </p>
       </div>

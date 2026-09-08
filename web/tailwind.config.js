@@ -1,4 +1,12 @@
 /** @type {import('tailwindcss').Config} */
+
+// Every studio colour resolves through a CSS variable so a single class works
+// in both themes: `bg-studio-surface` is white on light and #151922 on dark
+// without the component knowing which is active. The channels are stored
+// space-separated (see index.css) so <alpha-value> keeps working -- that is
+// what lets `bg-studio-card/80` and `border-studio-danger/30` still apply.
+const withAlpha = (name) => `rgb(var(--studio-${name}) / <alpha-value>)`;
+
 export default {
   content: [
     "./index.html",
@@ -9,17 +17,29 @@ export default {
     extend: {
       colors: {
         studio: {
-          bg: '#0B0E14',
-          surface: '#151922',
-          card: '#1D222E',
-          border: '#2A3245',
-          accent: '#3B82F6',
-          danger: '#EF4444',
-          warning: '#F59E0B',
-          success: '#10B981',
-          cyan: '#06B6D4',
-          violet: '#8B5CF6',
+          bg: withAlpha('bg'),
+          surface: withAlpha('surface'),
+          card: withAlpha('card'),
+          border: withAlpha('border'),
+
+          // Text, brightest to most muted.
+          fg: withAlpha('fg'),
+          fg2: withAlpha('fg2'),
+          fg3: withAlpha('fg3'),
+          fg4: withAlpha('fg4'),
+
+          accent: withAlpha('accent'),
+          danger: withAlpha('danger'),
+          warning: withAlpha('warning'),
+          success: withAlpha('success'),
+          cyan: withAlpha('cyan'),
+          violet: withAlpha('violet'),
+
+          'on-accent': withAlpha('on-accent'),
         }
+      },
+      boxShadow: {
+        panel: 'var(--studio-shadow)',
       },
       fontFamily: {
         mono: ['"JetBrains Mono"', 'Menlo', 'Monaco', 'Courier New', 'monospace'],

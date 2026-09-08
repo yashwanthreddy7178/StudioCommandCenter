@@ -18,7 +18,15 @@ logger = setup_logging("stream-service-sse")
 # the wait for a human, or the verification that follows the approval would never
 # reach the browser. DEGRADED is absent too - it is emitted for a single failed
 # tool call mid-investigation, not only at the end of a run.
-TERMINAL_EVENTS = {"COMPLETED", "ERROR", "VERIFICATION"}
+#
+# VERIFICATION was here and should not have been. It closed the stream while the
+# browser was still waiting for a COMPLETED that never arrived, so the launch
+# button stayed on "Investigating" for the rest of the session and the browser
+# quietly reconnected to a run that was over. It is not reliably an ending
+# either: a verification can report NOT_RECOVERED or PARTIALLY_RECOVERED, which
+# are outcomes, not conclusions. agent-worker now emits COMPLETED when the run
+# actually ends, so this service no longer has to infer it.
+TERMINAL_EVENTS = {"COMPLETED", "ERROR"}
 
 
 async def event_generator(run_id: str, since_seq: int = 0) -> AsyncGenerator[str, None]:
@@ -35,6 +43,32 @@ async def event_generator(run_id: str, since_seq: int = 0) -> AsyncGenerator[str
         finished = False
 
         while not finished:
+            # Checked before the fetch, and outside the try.
+            #
+            # The ceiling used to sit after the upstream call. An agent-worker
+            # that was unreachable sent every iteration straight to the exception
+            # handler below, which sleeps and loops, so the duration limit was
+            # never evaluated: the connection stayed open retrying once a second
+            # until the client went away. Under Cloud Run's 3600s request timeout
+            # that is an hour of held connection per browser, per run, and the
+            # service that would have closed it is the one that is down.
+            now = time.time()
+            if now - started >= settings.sse_max_stream_sec:
+                logger.info(
+                    "SSE stream reached its duration ceiling",
+                    extra={"run_id": run_id},
+                )
+                closing = {
+                    "run_id": run_id,
+                    "event_type": "STREAM_TIMEOUT",
+                    "description": (
+                        "Stream closed after reaching its duration limit. "
+                        "Reopen it to resume from the last event id."
+                    ),
+                }
+                yield f"data: {json.dumps(closing)}\n\n"
+                break
+
             try:
                 # Fetch new events from agent-worker
                 url = f"{settings.agent_worker_url}/runs/{run_id}/events?since_seq={current_seq}"
@@ -66,25 +100,6 @@ async def event_generator(run_id: str, since_seq: int = 0) -> AsyncGenerator[str
                     break
 
                 now = time.time()
-
-                # Without this the loop had no exit at all except the client
-                # going away, and under an ASGI transport that signal never
-                # arrives -- which is why the test suite hung rather than failed.
-                if now - started >= settings.sse_max_stream_sec:
-                    logger.info(
-                        "SSE stream reached its duration ceiling",
-                        extra={"run_id": run_id},
-                    )
-                    closing = {
-                        "run_id": run_id,
-                        "event_type": "STREAM_TIMEOUT",
-                        "description": (
-                            "Stream closed after reaching its duration limit. "
-                            "Reopen it to resume from the last event id."
-                        ),
-                    }
-                    yield f"data: {json.dumps(closing)}\n\n"
-                    break
 
                 if now - last_heartbeat >= settings.sse_heartbeat_interval_sec:
                     yield ": heartbeat\n\n"

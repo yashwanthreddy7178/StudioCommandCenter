@@ -2,8 +2,9 @@
 #
 # The `gcloud run deploy` invocation, in one place.
 #
-# Both the local deploy script and the GitHub Actions workflow call this, because
-# the flags below are not cosmetic: getting --no-cpu-throttling or the instance
+# Kept separate from deploy.sh, which prepares the project and the secrets, so
+# that the invocation stays reviewable on its own. The flags below are not
+# cosmetic: getting --no-cpu-throttling or the instance
 # bounds wrong produces a service that starts, serves its health checks, and then
 # fails in ways that look like application bugs. Two copies of this command would
 # drift, and the copy that drifts is the one nobody runs by hand.
@@ -40,7 +41,10 @@ if gcloud secrets describe spc-app-password --project "${PROJECT}" >/dev/null 2>
 else
     echo "ERROR: secret 'spc-app-password' not found in project ${PROJECT}." >&2
     echo "       The service is deployed with --allow-unauthenticated, so the" >&2
-    echo "       operator login is the only thing in front of it. Create it with:" >&2
+    echo "       operator login is the only thing in front of it." >&2
+    echo "" >&2
+    echo "       Set APP_PASSWORD in .env and run deploy/deploy.sh, which stores" >&2
+    echo "       it in Secret Manager, or create the secret by hand:" >&2
     echo "" >&2
     echo "         printf '%s' 'a-long-random-password' \\" >&2
     echo "           | gcloud secrets create spc-app-password --data-file=- \\" >&2
@@ -82,6 +86,11 @@ exec gcloud run deploy "${SERVICE}" \
     --set-env-vars "GRAFANA_OTLP_INSTANCE_ID=${GRAFANA_OTLP_INSTANCE_ID:-}" \
     --set-env-vars "NUM_TENANT_WORLDS=24" \
     --set-env-vars "TEMPO_SEARCH_AVAILABLE=true" \
-    --set-env-vars "ENABLE_METRIC_DISCOVERY=false"     --set-env-vars "DEPLOYMENT_ORIGIN=cloud"     --set-env-vars "APP_USERNAME=${APP_USERNAME:-supervisor}" \
+    --set-env-vars "ENABLE_METRIC_DISCOVERY=false" \
+    --set-env-vars "DEPLOYMENT_ORIGIN=cloud" \
+    --set-env-vars "APP_USERNAME=${APP_USERNAME:-supervisor}" \
+    --set-env-vars "MAX_RUNS_PER_SESSION=${MAX_RUNS_PER_SESSION:-6}" \
+    --set-env-vars "MAX_RUNS_PER_DEPLOYMENT=${MAX_RUNS_PER_DEPLOYMENT:-60}" \
+    --set-env-vars "DEMO_CREDENTIALS_PUBLIC=${DEMO_CREDENTIALS_PUBLIC:-false}" \
     --set-secrets "${SECRET_FLAGS}" \
     --quiet

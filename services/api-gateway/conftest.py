@@ -28,7 +28,16 @@ def isolated_lease_pool():
     between tests so each starts from an empty pool.
     """
     from src.lease import lease_manager
+    from src.quota import run_quota
 
-    lease_manager._leases.clear()
+    def reset():
+        lease_manager._leases.clear()
+        # The run quota is module-level state too, and counts every run these
+        # tests create. Left alone it would eventually refuse them, and the
+        # failure would land on whichever test happened to run last.
+        run_quota._global.clear()
+        run_quota._sessions.clear()
+
+    reset()
     yield
-    lease_manager._leases.clear()
+    reset()

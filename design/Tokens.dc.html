@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+    a { color: #2563EB; } a:hover { color: #1D4ED8; }
+    .sheet { --bg:#F6F7F9; --surface:#FFFFFF; --card:#F2F4F7; --border:#DFE3EA;
+             --text:#10141C; --text2:#47505F; --text3:#6B7480;
+             --accent:#2563EB; --danger:#DC2626; --warn:#B45309; --ok:#059669;
+             --cyan:#0891B2; --violet:#7C3AED; }
+    .row { display: flex; gap: 10px; align-items: stretch; }
+    .chip { flex: 1; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; }
+    .swatch { height: 44px; }
+    .meta { padding: 6px 8px; font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            line-height: 1.5; background: var(--surface); color: var(--text3); }
+    .meta b { display: block; color: var(--text); font-weight: 600; font-size: 11px; }
+    h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+         color: var(--text3); font-weight: 600; }
+  </style>
+</helmet>
+<div class="sheet" style="background: #F6F7F9; padding: 28px; min-height: 100%; box-sizing: border-box;">
+  <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 22px;">
+    <div style="font-size: 18px; font-weight: 700; color: #10141C; letter-spacing: -0.01em;">Theme tokens</div>
+    <div style="font-size: 12px; color: #47505F; line-height: 1.5; max-width: 640px;">
+      Light is derived from the existing dark palette, not invented alongside it: same hue
+      relationships, accents darkened so they hold contrast on white. Every direction artboard
+      uses these two sets and nothing else.
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 22px;">
+    <div>
+      <h3>Light — default</h3>
+      <div class="row">
+        <div class="chip"><div class="swatch" style="background:#F6F7F9"></div><div class="meta"><b>bg</b>#F6F7F9</div></div>
+        <div class="chip"><div class="swatch" style="background:#FFFFFF"></div><div class="meta"><b>surface</b>#FFFFFF</div></div>
+        <div class="chip"><div class="swatch" style="background:#F2F4F7"></div><div class="meta"><b>card</b>#F2F4F7</div></div>
+        <div class="chip"><div class="swatch" style="background:#DFE3EA"></div><div class="meta"><b>border</b>#DFE3EA</div></div>
+        <div class="chip"><div class="swatch" style="background:#10141C"></div><div class="meta"><b>text</b>#10141C</div></div>
+        <div class="chip"><div class="swatch" style="background:#47505F"></div><div class="meta"><b>text-2</b>#47505F</div></div>
+        <div class="chip"><div class="swatch" style="background:#6B7480"></div><div class="meta"><b>text-3</b>#6B7480</div></div>
+      </div>
+      <div class="row" style="margin-top: 10px;">
+        <div class="chip"><div class="swatch" style="background:#2563EB"></div><div class="meta"><b>accent</b>#2563EB</div></div>
+        <div class="chip"><div class="swatch" style="background:#DC2626"></div><div class="meta"><b>danger</b>#DC2626</div></div>
+        <div class="chip"><div class="swatch" style="background:#B45309"></div><div class="meta"><b>warning</b>#B45309</div></div>
+        <div class="chip"><div class="swatch" style="background:#059669"></div><div class="meta"><b>success</b>#059669</div></div>
+        <div class="chip"><div class="swatch" style="background:#0891B2"></div><div class="meta"><b>cyan</b>#0891B2</div></div>
+        <div class="chip"><div class="swatch" style="background:#7C3AED"></div><div class="meta"><b>violet</b>#7C3AED</div></div>
+      </div>
+    </div>
+
+    <div>
+      <h3>Dark — today's values, unchanged</h3>
+      <div class="row">
+        <div class="chip"><div class="swatch" style="background:#0B0E14"></div><div class="meta"><b>bg</b>#0B0E14</div></div>
+        <div class="chip"><div class="swatch" style="background:#151922"></div><div class="meta"><b>surface</b>#151922</div></div>
+        <div class="chip"><div class="swatch" style="background:#1D222E"></div><div class="meta"><b>card</b>#1D222E</div></div>
+        <div class="chip"><div class="swatch" style="background:#2A3245"></div><div class="meta"><b>border</b>#2A3245</div></div>
+        <div class="chip"><div class="swatch" style="background:#F1F5F9"></div><div class="meta"><b>text</b>#F1F5F9</div></div>
+        <div class="chip"><div class="swatch" style="background:#CBD5E1"></div><div class="meta"><b>text-2</b>#CBD5E1</div></div>
+        <div class="chip"><div class="swatch" style="background:#94A3B8"></div><div class="meta"><b>text-3</b>#94A3B8</div></div>
+      </div>
+      <div class="row" style="margin-top: 10px;">
+        <div class="chip"><div class="swatch" style="background:#3B82F6"></div><div class="meta"><b>accent</b>#3B82F6</div></div>
+        <div class="chip"><div class="swatch" style="background:#EF4444"></div><div class="meta"><b>danger</b>#EF4444</div></div>
+        <div class="chip"><div class="swatch" style="background:#F59E0B"></div><div class="meta"><b>warning</b>#F59E0B</div></div>
+        <div class="chip"><div class="swatch" style="background:#10B981"></div><div class="meta"><b>success</b>#10B981</div></div>
+        <div class="chip"><div class="swatch" style="background:#06B6D4"></div><div class="meta"><b>cyan</b>#06B6D4</div></div>
+        <div class="chip"><div class="swatch" style="background:#8B5CF6"></div><div class="meta"><b>violet</b>#8B5CF6</div></div>
+      </div>
+    </div>
+
+    <div>
+      <h3>Type — unchanged from the app</h3>
+      <div style="background:#FFFFFF; border:1px solid #DFE3EA; border-radius:8px; padding:16px;
+                  display:flex; flex-direction:column; gap:10px;">
+        <div style="font-size:18px; font-weight:700; color:#10141C; letter-spacing:-0.01em;">Inter 18/700 — panel and page titles</div>
+        <div style="font-size:12px; font-weight:500; color:#47505F;">Inter 12/500 — labels and body</div>
+        <div style="font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:700; color:#10141C;">JetBrains Mono 20/700 — 01:08:47 UTC</div>
+        <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6B7480;">JetBrains Mono 11 — every measured figure, so digits never shift width</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

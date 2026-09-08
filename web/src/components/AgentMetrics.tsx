@@ -15,11 +15,11 @@ const Metric: React.FC<{
   value: number | null;
   format?: (value: number) => string;
   className?: string;
-}> = ({ label, value, format = (v) => v.toLocaleString(), className = 'text-white' }) => (
+}> = ({ label, value, format = (v) => v.toLocaleString(), className = 'text-studio-fg' }) => (
   <div className="bg-studio-card/80 p-2.5 rounded-lg border border-studio-border/40">
-    <span className="text-[10px] text-slate-400 block">{label}</span>
+    <span className="text-[10px] text-studio-fg3 block">{label}</span>
     {value === null ? (
-      <span className="text-base font-bold text-slate-500 mt-0.5 block">--</span>
+      <span className="text-base font-bold text-studio-fg4 mt-0.5 block">--</span>
     ) : (
       <span className={`text-base font-bold mt-0.5 block ${className}`}>{format(value)}</span>
     )}
@@ -77,15 +77,15 @@ export const AgentMetrics: React.FC = () => {
   }, []);
 
   return (
-    <div className="bg-studio-surface border border-studio-border rounded-xl p-4 shadow-lg font-mono text-xs text-slate-300">
+    <div className="bg-studio-surface border border-studio-border rounded-xl p-4 shadow-panel font-mono text-xs text-studio-fg2">
       <div className="flex items-center justify-between pb-2 mb-3 border-b border-studio-border/60">
         <div className="flex items-center space-x-2">
           <Activity className="w-3.5 h-3.5 text-studio-cyan" />
-          <span className="font-semibold text-white uppercase tracking-wider text-[11px]">
+          <span className="font-semibold text-studio-fg uppercase tracking-wider text-[11px]">
             MCP Gateway Concurrency Metrics
           </span>
         </div>
-        <span className="text-[10px] text-slate-400 font-bold">
+        <span className="text-[10px] text-studio-fg3 font-bold">
           {qpsLimit === null ? 'QPS CAP: --' : `QPS CAP: ${qpsLimit.toFixed(1)}`}
         </span>
       </div>
@@ -95,7 +95,7 @@ export const AgentMetrics: React.FC = () => {
           label="Cache Hit Ratio"
           value={stats.cacheHitRatioPct}
           format={(v) => `${v.toFixed(1)}%`}
-          className="text-emerald-400"
+          className="text-studio-success"
         />
         {/* Upstream calls being shared between concurrent callers right now. The
             panel used to print a hardcoded "100% Dedupe" here, which was not a

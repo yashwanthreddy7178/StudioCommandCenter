@@ -40,7 +40,14 @@ logger = setup_logging("common-auth")
 # Paths every service leaves open. The health checks are what Cloud Run and the
 # deploy smoke test poll, so closing them would fail the deploy rather than
 # secure it; the login route has to be reachable to obtain a token at all.
-PUBLIC_PATHS = frozenset({"/healthz", "/readyz", "/auth/login"})
+PUBLIC_PATHS = frozenset({
+    "/healthz",
+    "/readyz",
+    "/auth/login",
+    # Reachable before sign-in by definition; it answers with nothing
+    # unless the deployment has opted into publishing its credential.
+    "/auth/demo-credentials",
+})
 
 TOKEN_TTL_SECONDS = 12 * 60 * 60
 

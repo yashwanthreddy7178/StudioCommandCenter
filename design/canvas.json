@@ -1,0 +1,54 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "A — Refined console", "x": 0, "y": 0, "w": 1440, "h": 1010 },
+    { "file": "DirectionB.dc.html", "title": "B — Sidebar workbench", "x": 1560, "y": 0, "w": 1440, "h": 1010 },
+    { "file": "DirectionC.dc.html", "title": "C — Investigation timeline", "x": 0, "y": 1180, "w": 1440, "h": 1180 },
+    { "file": "DirectionD.dc.html", "title": "D — Dense ops grid", "x": 1560, "y": 1180, "w": 1440, "h": 900 },
+    { "file": "Tokens.dc.html", "title": "Theme tokens", "x": 1560, "y": 2200, "w": 900, "h": 900 }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -230,
+      "w": 520,
+      "text": "Four directions, all on the same light/dark token set.\nEvery artboard has a Theme tweak above it — flip it to see the dark values.\nLight is the default everywhere, as asked.\n\nNothing here is implemented yet."
+    },
+    {
+      "id": "note-a",
+      "x": 0,
+      "y": -110,
+      "w": 480,
+      "text": "A — REFINED CONSOLE\nToday's layout, cleaned up. Status band merged into one row, delivery tiles given a real hierarchy, fleet compressed to one strip.\n\nWhy: lowest risk, ships fastest, nothing to relearn.\nTradeoff: still scrolls — evidence and hypothesis sit below the fold on a laptop."
+    },
+    {
+      "id": "note-b",
+      "x": 1560,
+      "y": -110,
+      "w": 480,
+      "text": "B — SIDEBAR WORKBENCH\nPersistent left rail holds tenant, pool, scenario controls and the theme switch. Main area splits fleet (left) from investigation (right).\n\nWhy: nothing below the fold; the rail is where run history and audit would live as the app grows.\nTradeoff: most structural change, and the investigation column is narrow for long evidence."
+    },
+    {
+      "id": "note-c",
+      "x": 0,
+      "y": 1070,
+      "w": 480,
+      "text": "C — INVESTIGATION TIMELINE\nThe run is the page: a vertical spine of steps, each carrying the actual figures it read, ending in the approval gate. Fleet reduced to a KPI strip up top.\n\nWhy: this is the story judges came for — it shows the agent reasoning, not just its output.\nTradeoff: weakest for at-a-glance monitoring; poor as an idle screen."
+    },
+    {
+      "id": "note-d",
+      "x": 1560,
+      "y": 1070,
+      "w": 480,
+      "text": "D — DENSE OPS GRID\nEverything on one screen, no scrolling, monospace-forward, hairline borders. Reads like a real operations console.\n\nWhy: highest credibility as a production tool; most information per pixel.\nTradeoff: 9-10px type is unreadable on a projector, and it is intimidating cold."
+    },
+    {
+      "id": "note-tokens",
+      "x": 1560,
+      "y": 2110,
+      "w": 480,
+      "text": "Light derived from the existing dark palette rather than invented beside it — same hues, accents darkened to hold contrast on white. Dark values are unchanged from tailwind.config.js."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

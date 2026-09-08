@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { AlertTriangle, X } from 'lucide-react';
 import { Header } from './components/Header';
 import { DeliveryCountdown } from './components/DeliveryCountdown';
 import { PanelBoundary } from './components/PanelBoundary';
@@ -10,6 +11,8 @@ import { StatusBanner } from './components/StatusBanner';
 import { AgentMetrics } from './components/AgentMetrics';
 import { useTenantLease } from './hooks/useTenantLease';
 import { useRunStream } from './hooks/useRunStream';
+import { useTheme } from './hooks/useTheme';
+import { Theme } from './lib/theme';
 import { WorldState } from './types/api';
 import { Login } from './components/Login';
 import { getToken, clearToken, UNAUTHORIZED_EVENT } from './lib/auth';
@@ -21,19 +24,31 @@ export const App: React.FC = () => {
   // executes real remediations.
   const [signedIn, setSignedIn] = useState<boolean>(() => getToken() !== null);
 
+  // Owned here rather than inside the command centre so the sign-in screen is
+  // themed too -- otherwise a viewer who chose dark signs in on a light page.
+  const { theme, toggleTheme } = useTheme();
+
   if (!signedIn) {
-    return <Login onSignedIn={() => setSignedIn(true)} />;
+    return <Login onSignedIn={() => setSignedIn(true)} theme={theme} onToggleTheme={toggleTheme} />;
   }
 
-  return <CommandCentre onSignedOut={() => { clearToken(); setSignedIn(false); }} />;
+  return (
+    <CommandCentre
+      onSignedOut={() => { clearToken(); setSignedIn(false); }}
+      theme={theme}
+      onToggleTheme={toggleTheme}
+    />
+  );
 };
 
 interface CommandCentreProps {
   /** Called when the server rejects the stored token mid-session. */
   onSignedOut: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
 }
 
-const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
+const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut, theme, onToggleTheme }) => {
   // A token that expires mid-session shows up as a 401 on whichever poll fires
   // first. Any of them means the same thing, so the shell listens once.
   useEffect(() => {
@@ -46,6 +61,8 @@ const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [isExecutingApproval, setIsExecutingApproval] = useState<boolean>(false);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
+  /** Why the last attempt to start an investigation was refused, if it was. */
+  const [runError, setRunError] = useState<string | null>(null);
 
   const {
     events,
@@ -147,6 +164,7 @@ const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
 
   const handleStartInvestigation = async () => {
     if (!lease) return;
+    setRunError(null);
     try {
       const res = await apiFetch('/api/gateway/runs', {
         method: 'POST',
@@ -158,10 +176,20 @@ const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
           objective: 'Will Shadow Protocol miss the 18:00 VFX delivery deadline?',
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+
+      // A refusal carries a usable explanation -- the demo quota says how long
+      // to wait, a lease conflict says which world is not yours. Dropping the
+      // response on the floor left the button looking broken instead.
+      if (!res.ok) {
+        setRunError(data?.detail || `Could not start the investigation (HTTP ${res.status}).`);
+        return;
+      }
+
       setActiveRunId(data.run_id);
     } catch (err) {
       console.error('Failed to start investigation', err);
+      setRunError('Could not reach the gateway to start an investigation.');
     }
   };
 
@@ -202,10 +230,20 @@ const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
   };
 
   const effectiveImpact = verificationImpact || impact;
-  const isRecovered = verificationImpact?.is_remediated || (world?.is_incident_active === false && activeRunId !== null && runState === 'COMPLETED');
+  // A verification that ran is the authority on whether the fleet recovered.
+  //
+  // This was an `||` chain, so a run that verified as PARTIALLY_RECOVERED --
+  // workers healthy, deadline still missed because of the backlog -- fell
+  // through to the heuristic below, which sees no active incident and a
+  // completed run and declares "REMEDIATION VERIFIED: the fleet returned to
+  // baseline". That is a claim the verification had already contradicted. The
+  // heuristic is only for runs that never reached verification at all.
+  const isRecovered = verificationImpact
+    ? Boolean(verificationImpact.is_remediated)
+    : world?.is_incident_active === false && activeRunId !== null && runState === 'COMPLETED';
 
   return (
-    <div className="min-h-screen bg-studio-bg text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-studio-bg text-studio-fg flex flex-col">
       <Header
         lease={lease}
         tenants={tenants}
@@ -218,11 +256,30 @@ const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
         onResetWorld={handleResetWorld}
         onStartInvestigation={handleStartInvestigation}
         isInvestigating={isStreaming || runState === 'RUNNING'}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
         {/* Status / Degraded Banner */}
         <StatusBanner runState={runState} isRecovered={Boolean(isRecovered)} />
+
+        {runError && (
+          <div
+            role="alert"
+            className="flex items-start gap-3 px-4 py-3 rounded-lg bg-studio-warning/10 border border-studio-warning/40 text-studio-warning"
+          >
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span className="text-xs font-mono leading-relaxed flex-1">{runError}</span>
+            <button
+              onClick={() => setRunError(null)}
+              aria-label="Dismiss"
+              className="text-studio-warning/70 hover:text-studio-warning shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Top: Delivery Countdown & Shift */}
         <PanelBoundary name="Delivery Projection">

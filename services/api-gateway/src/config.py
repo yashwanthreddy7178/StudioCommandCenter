@@ -1,12 +1,28 @@
 """Configuration settings for api-gateway."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# services/<name>/src/config.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
     """API Gateway service configuration."""
-    model_config = SettingsConfigDict(env_prefix="", case_sensitive=False)
+    # Reads .env like every other service. Without env_file this settings
+    # class only ever saw the process environment, so anything set in .env
+    # for this service was silently ignored -- the value looked configured
+    # and the default was what actually ran. extra="ignore" is required
+    # alongside it: .env holds keys belonging to the other services too.
+    model_config = SettingsConfigDict(
+        env_file=REPO_ROOT / ".env",
+        env_file_encoding="utf-8",
+        env_prefix="",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     service_name: str = "api-gateway"
     port: int = 8000
@@ -26,6 +42,24 @@ class Settings(BaseSettings):
     # Multi-tenant Leasing
     tenant_lease_ttl_sec: float = 1200.0 # 20 minutes
     num_tenant_worlds: int = 24
+
+    # Whether the sign-in screen shows the credential it expects.
+    #
+    # For a public demo the login is a formality -- the password is published
+    # anyway -- and a judge arriving from a submission link should not have to
+    # hunt for it. Off by default so a deployment has to say yes: nothing should
+    # print its own password because someone forgot to turn a flag off.
+    demo_credentials_public: bool = False
+
+    # Demo quota on investigation runs.
+    #
+    # Every run is a chain of model calls billed to whoever deployed this, and
+    # the service is published with a public link, so the ceiling is a budget
+    # control rather than an abuse control. Set either to 0 to disable that half;
+    # both at 0 removes the quota entirely, which is the sensible local setting.
+    max_runs_per_session: int = 6
+    max_runs_per_deployment: int = 60
+    run_quota_window_sec: float = 3600.0 # 1 hour
 
 
 settings = Settings()

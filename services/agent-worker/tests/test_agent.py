@@ -483,3 +483,91 @@ def test_control_group_rejects_a_worker_reporting_no_duration():
     result = _test_control_group(ledger)
     assert not result.passed
     assert "w-01" in result.evidence_snippet
+
+
+@pytest.mark.asyncio
+async def test_verified_run_emits_its_own_ending(monkeypatch):
+    """Verify the run states when it is over instead of leaving it inferred.
+
+    stream-service used to treat VERIFICATION as terminal and close the stream
+    on it, while the browser waited for a COMPLETED that was never emitted: the
+    launch button stayed on "Investigating" for the rest of the session and the
+    browser silently reconnected to a finished run.
+    """
+    from src.agent import tools as agent_tools
+    from services.common.models import RunDocument, RunState
+
+    run = RunDocument(
+        run_id="run-verify-1",
+        tenant_id="t01",
+        user_id="usr-test",
+        session_id="sess-test",
+        objective="check",
+        state=RunState.AWAITING_APPROVAL,
+        step_count=7,
+    )
+    await store.save_run(run)
+
+    async def fake_verify(**kwargs):
+        return {"status": "VERIFIED", "is_recovered": True, "reason": "back to baseline"}
+
+    monkeypatch.setattr(agent_tools.tool_client, "verify_remediation", fake_verify)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        res = await client.post("/runs/run-verify-1/verify")
+        assert res.status_code == 200
+
+    events = await store.get_events("run-verify-1", since_seq=0)
+    kinds = [e.event_type.value for e in events]
+
+    # The verification result, then an explicit ending.
+    assert "VERIFICATION" in kinds
+    assert kinds[-1] == "COMPLETED"
+    assert (await store.get_run("run-verify-1")).state == RunState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_unrecovered_run_still_ends(monkeypatch):
+    """Verify the unhappy path terminates too.
+
+    DEGRADED cannot carry the ending: it is emitted for a single failed tool
+    call mid-investigation, so the stream service does not treat it as one.
+    COMPLETED is emitted either way and the outcome rides in the payload.
+    """
+    from src.agent import tools as agent_tools
+    from services.common.models import RunDocument, RunState
+
+    run = RunDocument(
+        run_id="run-verify-2",
+        tenant_id="t01",
+        user_id="usr-test",
+        session_id="sess-test",
+        objective="check",
+        state=RunState.AWAITING_APPROVAL,
+        step_count=7,
+    )
+    await store.save_run(run)
+
+    async def fake_verify(**kwargs):
+        return {
+            "status": "PARTIALLY_RECOVERED",
+            "is_recovered": False,
+            "reason": "backlog still projects a delay",
+        }
+
+    monkeypatch.setattr(agent_tools.tool_client, "verify_remediation", fake_verify)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        assert (await client.post("/runs/run-verify-2/verify")).status_code == 200
+
+    events = await store.get_events("run-verify-2", since_seq=0)
+    final = events[-1]
+    assert final.event_type.value == "COMPLETED"
+    # The ending does not claim a recovery the verification refused.
+    assert final.payload["is_recovered"] is False
+    assert "did not fully recover" in final.description
+    assert (await store.get_run("run-verify-2")).state == RunState.DEGRADED

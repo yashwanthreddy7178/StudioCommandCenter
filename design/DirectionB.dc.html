@@ -1,0 +1,289 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+  <style>
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+    a { color: #2563EB; } a:hover { color: #1D4ED8; }
+    .app { --bg:#F6F7F9; --surface:#FFFFFF; --card:#F2F4F7; --border:#DFE3EA;
+           --text:#10141C; --text2:#47505F; --text3:#6B7480;
+           --accent:#2563EB; --danger:#DC2626; --warn:#B45309; --ok:#059669; --cyan:#0891B2;
+           --danger-bg:#FEF2F2; --ok-bg:#ECFDF5; --warn-bg:#FFFBEB; --accent-bg:#EFF6FF;
+           --shadow: 0 1px 2px rgba(16,20,28,.05), 0 6px 20px rgba(16,20,28,.05); }
+    .app.dark { --bg:#0B0E14; --surface:#151922; --card:#1D222E; --border:#2A3245;
+           --text:#F1F5F9; --text2:#CBD5E1; --text3:#94A3B8;
+           --accent:#3B82F6; --danger:#EF4444; --warn:#F59E0B; --ok:#10B981; --cyan:#06B6D4;
+           --danger-bg:rgba(239,68,68,.10); --ok-bg:rgba(16,185,129,.10);
+           --warn-bg:rgba(245,158,11,.10); --accent-bg:rgba(59,130,246,.12);
+           --shadow: 0 1px 2px rgba(0,0,0,.45), 0 8px 24px rgba(0,0,0,.35); }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .panel { background: var(--surface); border: 1px solid var(--border);
+             border-radius: 12px; box-shadow: var(--shadow); }
+    .ptitle { font-size: 11px; font-weight: 600; letter-spacing: .07em;
+              text-transform: uppercase; color: var(--text2); }
+    .navitem { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+               border-radius: 7px; font-size: 12px; font-weight: 500; color: var(--text2); }
+    .navitem.on { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  </style>
+</helmet>
+<div class="app {{themeClass}}" style="background: var(--bg); min-height: 100%; box-sizing: border-box;
+     color: var(--text); display: flex;">
+
+  <div style="width: 232px; flex-shrink: 0; background: var(--surface);
+              border-right: 1px solid var(--border); padding: 16px 12px;
+              display: flex; flex-direction: column; gap: 18px;">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 4px;">
+      <div style="width: 30px; height: 30px; border-radius: 7px; background: var(--accent);
+                  display: flex; align-items: center; justify-content: center;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 4v16"/></svg>
+      </div>
+      <div style="font-size: 12px; font-weight: 700; line-height: 1.25;">Studio Production<br>Commander</div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div class="mono" style="font-size: 9px; letter-spacing: .1em; color: var(--text3); padding: 0 6px;">WORLD</div>
+      <div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+                  padding: 10px; display: flex; flex-direction: column; gap: 7px;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <span class="mono" style="font-size: 15px; font-weight: 700;">T01</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div style="height: 4px; border-radius: 2px; background: var(--border); overflow: hidden;">
+          <div style="width: 25%; height: 100%; background: var(--accent);"></div>
+        </div>
+        <div class="mono" style="font-size: 10px; color: var(--text3);">18 of 24 worlds free</div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 2px;">
+      <div class="navitem on">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+        Command centre
+      </div>
+      <div class="navitem">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
+        Production board
+      </div>
+      <div class="navitem">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        Run history
+      </div>
+      <div class="navitem">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Audit trail
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div class="mono" style="font-size: 9px; letter-spacing: .1em; color: var(--text3); padding: 0 6px;">SCENARIO</div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div style="padding: 8px 10px; border-radius: 7px; font-size: 12px; font-weight: 600;
+                    background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger);">Simulate incident</div>
+        <div style="padding: 8px 10px; border-radius: 7px; font-size: 12px; font-weight: 500;
+                    background: var(--card); color: var(--text2); border: 1px solid var(--border);">Reset world</div>
+      </div>
+    </div>
+
+    <div style="flex: 1;"></div>
+
+    <div style="display: flex; align-items: center; justify-content: space-between;
+                padding: 8px 10px; border-radius: 7px; background: var(--card); border: 1px solid var(--border);">
+      <span style="font-size: 11px; color: var(--text2); font-weight: 500;">Appearance</span>
+      <div style="display: flex; background: var(--bg); border-radius: 5px; padding: 2px; gap: 2px;">
+        <span style="padding: 3px 7px; border-radius: 4px; font-size: 10px; font-weight: 600;
+                     background: {{lightPill}}; color: {{lightPillFg}};">Light</span>
+        <span style="padding: 3px 7px; border-radius: 4px; font-size: 10px; font-weight: 600;
+                     background: {{darkPill}}; color: {{darkPillFg}};">Dark</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;
+                padding: 13px 20px; border-bottom: 1px solid var(--border); background: var(--surface);">
+      <div class="mono" style="display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600;
+                  padding: 5px 9px; border-radius: 6px; color: var(--danger);
+                  background: var(--danger-bg); border: 1px solid var(--danger);">
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--danger);"></span>
+        INCIDENT ACTIVE · v2.4.1 REGRESSION
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span class="mono" style="font-size: 11px; color: var(--text3);">run-4c81af92 · 23 steps</span>
+        <div style="display: flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 6px;
+                    background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
+          Launch agent
+        </div>
+      </div>
+    </div>
+
+    <div style="flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; padding: 16px 20px;">
+
+      <div style="display: flex; flex-direction: column; gap: 14px; min-width: 0;">
+        <div class="panel" style="padding: 16px;">
+          <div class="ptitle" style="margin-bottom: 12px;">Delivery projection</div>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+            <div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 13px;">
+              <div style="font-size: 11px; color: var(--text3); margin-bottom: 3px;">Target deadline</div>
+              <div class="mono" style="font-size: 20px; font-weight: 700;">18:00:00</div>
+            </div>
+            <div style="background: var(--danger-bg); border: 1px solid var(--danger); border-radius: 8px; padding: 13px;">
+              <div style="font-size: 11px; color: var(--danger); margin-bottom: 3px;">Projected completion</div>
+              <div class="mono" style="font-size: 20px; font-weight: 700; color: var(--danger);">01:08:47</div>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 14px; margin-top: 11px; padding-top: 11px;
+                      border-top: 1px solid var(--border);">
+            <span class="mono" style="font-size: 11px; color: var(--text3);">DELAY <b style="color: var(--danger); font-size: 13px;">+47m</b></span>
+            <span class="mono" style="font-size: 11px; color: var(--text3);">THROUGHPUT <b style="color: var(--warn); font-size: 13px;">15.3</b> / 18.5 fpm</span>
+            <span class="mono" style="font-size: 11px; color: var(--text3);">QUEUE <b style="color: var(--text); font-size: 13px;">2,800</b></span>
+          </div>
+        </div>
+
+        <div class="panel" style="padding: 16px; flex: 1;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <div class="ptitle">Worker fleet</div>
+            <span class="mono" style="font-size: 10px; color: var(--text3);">2 degraded of 8</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <sc-for list="{{workers}}" as="w" hint-placeholder-count="8">
+              <div style="display: flex; align-items: center; gap: 12px; padding: 9px 11px; border-radius: 7px;
+                          background: {{w.bg}}; border: 1px solid {{w.border}};">
+                <span class="mono" style="font-size: 12px; font-weight: 700; width: 40px;">{{w.id}}</span>
+                <span class="mono" style="font-size: 10px; color: var(--text3); width: 96px;">{{w.gpu}}</span>
+                <div style="flex: 1; height: 5px; border-radius: 3px; background: {{w.trackBg}}; overflow: hidden;">
+                  <div style="width: {{w.gpuPct}}; height: 100%; background: {{w.dot}};"></div>
+                </div>
+                <span class="mono" style="font-size: 11px; font-weight: 600; color: {{w.dot}}; width: 42px; text-align: right;">{{w.gpuPct}}</span>
+                <span class="mono" style="font-size: 11px; font-weight: 600; color: {{w.dot}}; width: 46px; text-align: right;">{{w.dur}}</span>
+                <span class="mono" style="font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px;
+                            background: {{w.verBg}}; color: {{w.verFg}};">{{w.ver}}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div class="ptitle">Investigation</div>
+          <span class="mono" style="font-size: 10px; color: var(--ok);">● live</span>
+        </div>
+
+        <div style="background: var(--ok-bg); border: 1px solid var(--ok); border-radius: 8px; padding: 12px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+            <span class="mono" style="font-size: 10px; font-weight: 700; color: var(--ok);">SUPPORTED · 5/6</span>
+            <span class="mono" style="font-size: 10px; color: var(--ok);">HIGH</span>
+          </div>
+          <div style="font-size: 12px; color: var(--text2); line-height: 1.45;">
+            Degradation is confined to renderer v2.4.1 and covers every worker on it.
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <sc-for list="{{tests}}" as="t" hint-placeholder-count="6">
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 11px;">
+              <span style="width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0; background: {{t.bg}};
+                          display: flex; align-items: center; justify-content: center;">
+                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="{{t.path}}"/></svg>
+              </span>
+              <span style="flex: 1; color: var(--text2);">{{t.name}}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="height: 1px; background: var(--border);"></div>
+
+        <div class="ptitle">Evidence</div>
+        <div style="display: flex; flex-direction: column; gap: 7px; overflow: hidden;">
+          <sc-for list="{{events}}" as="e" hint-placeholder-count="4">
+            <div style="background: var(--card); border: 1px solid var(--border); border-radius: 7px; padding: 9px 10px;">
+              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 3px;">
+                <span class="mono" style="font-size: 9px; font-weight: 700; color: var(--text3);">#{{e.n}}</span>
+                <span class="mono" style="font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 3px;
+                            background: var(--accent-bg); color: var(--accent);">{{e.tool}}</span>
+              </div>
+              <div style="font-size: 11px; color: var(--text2); line-height: 1.4;">{{e.desc}}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="flex: 1;"></div>
+        <div style="display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px;
+                    border-radius: 7px; background: var(--warn); color: #fff; font-size: 12px; font-weight: 600;">
+          Review 3 remediation options
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = (this.props.theme ?? 'light') === 'dark';
+    const ok = dark ? '#10B981' : '#059669';
+    const bad = dark ? '#EF4444' : '#DC2626';
+    const badBg = dark ? 'rgba(239,68,68,.10)' : '#FEF2F2';
+    const card = dark ? '#1D222E' : '#F2F4F7';
+    const border = dark ? '#2A3245' : '#DFE3EA';
+    const accent = dark ? '#3B82F6' : '#2563EB';
+
+    const spec = [
+      ['w-01', 'RTX 4090', '94%', '20s', false],
+      ['w-02', 'A100-SXM4-80GB', '94%', '26s', false],
+      ['w-03', 'RTX 3080', '29%', '142s', true],
+      ['w-04', 'RTX 4090', '94%', '23s', false],
+      ['w-05', 'A100-SXM4-80GB', '91%', '25s', false],
+      ['w-06', 'RTX 3080', '97%', '41s', false],
+      ['w-07', 'RTX 4090', '30%', '139s', true],
+      ['w-08', 'A100-SXM4-80GB', '93%', '23s', false],
+    ];
+
+    return {
+      themeClass: dark ? 'dark' : '',
+      lightPill: dark ? 'transparent' : (dark ? '#151922' : '#FFFFFF'),
+      lightPillFg: dark ? '#94A3B8' : '#10141C',
+      darkPill: dark ? '#151922' : 'transparent',
+      darkPillFg: dark ? '#F1F5F9' : '#6B7480',
+      workers: spec.map(([id, gpu, gpuPct, dur, sick]) => ({
+        id, gpu, gpuPct, dur,
+        bg: sick ? badBg : 'transparent',
+        border: sick ? bad : border,
+        dot: sick ? bad : ok,
+        trackBg: card,
+        ver: sick ? 'v2.4.1' : 'v2.4.0',
+        verBg: sick ? bad : card,
+        verFg: sick ? '#fff' : (dark ? '#CBD5E1' : '#47505F'),
+      })),
+      events: [
+        { n: 17, tool: 'query_prometheus', desc: 'Per-worker GPU utilisation, to separate stalling from saturation.' },
+        { n: 18, tool: 'tempo_traceql-search', desc: 'Frame spans, to check where the time actually goes.' },
+        { n: 19, tool: 'query_loki_logs', desc: 'Renderer configuration change, to place it before the degradation.' },
+        { n: 20, tool: 'impact-engine', desc: 'Projected delay 47 minutes. At risk: SP_VFX_R04.' },
+      ],
+      tests: [
+        { name: 'Temporal precedence', pass: true },
+        { name: 'Metric correlation', pass: true },
+        { name: 'Mechanism verification', pass: true },
+        { name: 'Fleet localization', pass: true },
+        { name: 'Trace attribution', pass: true },
+        { name: 'Control group stability', pass: false },
+      ].map((t) => ({
+        ...t,
+        bg: t.pass ? ok : bad,
+        path: t.pass ? 'M20 6 9 17l-5-5' : 'M18 6 6 18M6 6l12 12',
+      })),
+      accent,
+    };
+  }
+}
+</script>
+</body>
+</html>

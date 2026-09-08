@@ -100,3 +100,14 @@ dist-ssr/
 !tsconfig.node.json
 !infra/grafana/dashboards/*.json
 !.github/**/*.json
+# The canvas layout manifest: artboard positions and the notes explaining each
+# direction. Without it a re-seed loses the arrangement and the annotations.
+!design/canvas.json
+
+# Design canvas.
+# The seeded canvas is a ~2 MB published-editor payload carrying vendor strings
+# that the submission compliance audit correctly flags, and it is regenerable
+# from the .dc.html artboards beside it. Those stay tracked: they are the source
+# the canvas is rebuilt from, and they are plain hand-written markup.
+design/*.html
+!design/*.dc.html

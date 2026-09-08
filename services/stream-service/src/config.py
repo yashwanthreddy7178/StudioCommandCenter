@@ -1,12 +1,28 @@
 """Configuration settings for stream-service."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# services/<name>/src/config.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
     """Stream service configuration."""
-    model_config = SettingsConfigDict(env_prefix="", case_sensitive=False)
+    # Reads .env like every other service. Without env_file this settings
+    # class only ever saw the process environment, so anything set in .env
+    # for this service was silently ignored -- the value looked configured
+    # and the default was what actually ran. extra="ignore" is required
+    # alongside it: .env holds keys belonging to the other services too.
+    model_config = SettingsConfigDict(
+        env_file=REPO_ROOT / ".env",
+        env_file_encoding="utf-8",
+        env_prefix="",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     service_name: str = "stream-service"
     port: int = 8005

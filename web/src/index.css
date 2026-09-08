@@ -2,10 +2,72 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens.
+ *
+ * Held as space-separated RGB channels rather than hex so Tailwind can apply
+ * opacity modifiers to them (`bg-studio-card/80`) through <alpha-value>.
+ *
+ * Light is the default and is derived from the dark palette rather than
+ * invented beside it: same hues, accents darkened until they hold contrast on
+ * white. Dark keeps the values the app already shipped with.
+ */
 @layer base {
-  body {
-    @apply bg-studio-bg text-slate-100 font-sans selection:bg-studio-accent selection:text-white;
+  :root {
+    --studio-bg: 246 247 249;
+    --studio-surface: 255 255 255;
+    --studio-card: 242 244 247;
+    --studio-border: 223 227 234;
+
+    --studio-fg: 16 20 28;
+    --studio-fg2: 71 80 95;
+    --studio-fg3: 107 116 128;
+    --studio-fg4: 138 146 158;
+
+    --studio-accent: 37 99 235;
+    --studio-danger: 220 38 38;
+    --studio-warning: 180 83 9;
+    --studio-success: 5 150 105;
+    --studio-cyan: 8 145 178;
+    --studio-violet: 124 58 237;
+
+    /* Text placed on a filled accent/status button. */
+    --studio-on-accent: 255 255 255;
+
+    --studio-shadow: 0 1px 2px rgb(16 20 28 / 0.05), 0 6px 20px rgb(16 20 28 / 0.05);
   }
+
+  .dark {
+    --studio-bg: 11 14 20;
+    --studio-surface: 21 25 34;
+    --studio-card: 29 34 46;
+    --studio-border: 42 50 69;
+
+    --studio-fg: 241 245 249;
+    --studio-fg2: 203 213 225;
+    --studio-fg3: 148 163 184;
+    --studio-fg4: 100 116 139;
+
+    --studio-accent: 59 130 246;
+    --studio-danger: 239 68 68;
+    --studio-warning: 245 158 11;
+    --studio-success: 16 185 129;
+    --studio-cyan: 6 182 212;
+    --studio-violet: 139 92 246;
+
+    --studio-on-accent: 255 255 255;
+
+    --studio-shadow: 0 1px 2px rgb(0 0 0 / 0.45), 0 8px 24px rgb(0 0 0 / 0.35);
+  }
+
+  body {
+    @apply bg-studio-bg text-studio-fg font-sans;
+    @apply selection:bg-studio-accent selection:text-studio-on-accent;
+  }
+
+  /* Native controls (the tenant picker, date inputs) follow the theme instead
+   * of rendering a light dropdown over a dark panel. */
+  :root { color-scheme: light; }
+  .dark { color-scheme: dark; }
 }
 
 /* Custom Scrollbar */
@@ -15,22 +77,22 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #0B0E14;
+  background: rgb(var(--studio-bg));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2A3245;
+  background: rgb(var(--studio-border));
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3B82F6;
+  background: rgb(var(--studio-accent));
 }
 
 /* Pulse Animations */
 @keyframes glow-pulse {
-  0%, 100% { opacity: 0.8; filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.6)); }
-  50% { opacity: 0.4; filter: drop-shadow(0 0 2px rgba(239, 68, 68, 0.2)); }
+  0%, 100% { opacity: 0.9; filter: drop-shadow(0 0 8px rgb(var(--studio-danger) / 0.55)); }
+  50% { opacity: 0.55; filter: drop-shadow(0 0 2px rgb(var(--studio-danger) / 0.2)); }
 }
 
 .animate-glow-danger {

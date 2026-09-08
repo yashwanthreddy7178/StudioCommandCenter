@@ -207,6 +207,7 @@ async def verify_run(run_id: str, background_tasks: BackgroundTasks) -> Dict[str
 
         recovered = bool(result.get("is_recovered"))
         run.state = RunState.COMPLETED if recovered else RunState.DEGRADED
+        run.step_count = seq + 1
         await store.save_run(run)
         await store.emit_event(
             StepEvent(
@@ -217,6 +218,44 @@ async def verify_run(run_id: str, background_tasks: BackgroundTasks) -> Dict[str
                 title=f"Verification: {result.get('status', 'UNKNOWN')}",
                 description=result.get("reason", ""),
                 payload=result,
+            )
+        )
+
+        # The run says when it is over, rather than the stream service inferring
+        # it from the last event type.
+        #
+        # VERIFICATION used to be treated as terminal by stream-service, so the
+        # stream closed on it while the browser was still waiting for a
+        # COMPLETED that never came: the launch button stayed on "Investigating"
+        # for good, and the browser silently reconnected to a finished run. It is
+        # also not reliably terminal -- a verification can come back
+        # NOT_RECOVERED or PARTIALLY_RECOVERED, which are outcomes rather than
+        # endings. Ending the run here keeps that decision with the service that
+        # owns the run.
+        await store.emit_event(
+            StepEvent(
+                seq=seq + 1,
+                run_id=run_id,
+                tenant_id=run.tenant_id,
+                # COMPLETED either way: it states that the run is over, which is
+                # a different fact from whether the fleet recovered. DEGRADED
+                # cannot carry it -- that event fires for a single failed tool
+                # call mid-investigation, so stream-service rightly does not
+                # treat it as an ending, and using it here would hang the
+                # unhappy path exactly as VERIFICATION hung the happy one.
+                event_type=EventType.COMPLETED,
+                title="Run Complete" if recovered else "Run Complete: Not Fully Recovered",
+                description=(
+                    "The remediation was verified against post-action telemetry "
+                    "and the fleet is back within its delivery window."
+                    if recovered else
+                    f"The run has finished, but the fleet did not fully recover: "
+                    f"{result.get('reason', 'see the verification step above')}"
+                ),
+                payload={
+                    "verification_status": result.get("status"),
+                    "is_recovered": recovered,
+                },
             )
         )
 
