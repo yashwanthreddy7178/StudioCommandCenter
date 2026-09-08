@@ -2,6 +2,7 @@ import React from 'react';
 import { AlertCircle, CheckCircle2, Gauge, Clock } from 'lucide-react';
 import { ImpactProjection, WorldState } from '../types/api';
 import { utcTime } from '../lib/time';
+import { deliveryVerdict } from '../lib/delivery';
 
 interface DeliveryCountdownProps {
   impact: ImpactProjection | null;
@@ -24,7 +25,6 @@ export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({
   // Nothing is substituted when a value is missing: a placeholder number here
   // would be indistinguishable on screen from a measured one.
   const delayMinutes = impact?.delay_minutes ?? null;
-  const isLate = (delayMinutes ?? 0) > 0;
   const throughput = world?.observed_throughput_fpm ?? impact?.observed_throughput_fpm ?? null;
   const baseline = world?.baseline_throughput_fpm ?? impact?.baseline_throughput_fpm ?? null;
   const queueDepth = world?.queue_depth ?? impact?.queue_depth ?? null;
@@ -38,11 +38,23 @@ export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({
   const nowIso = new Date().toISOString();
   const degraded = baseline !== null && throughput !== null && throughput < baseline * 0.9;
 
+  // Derived from the timestamps this panel is already displaying, not from
+  // delay_minutes alone -- see lib/delivery.ts for why those are different
+  // questions.
+  const verdict = deliveryVerdict({
+    deadlineIso: deadline,
+    projectedIso: impact?.projected_completion_utc,
+    asOfIso: impact?.as_of ?? nowIso,
+    delayMinutes,
+  });
+  const isLate = verdict.state === 'late';
+  const deadlinePassed = verdict.state === 'passed';
+
   return (
     <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-panel relative overflow-hidden">
       <div
         className={`absolute -right-20 -top-20 w-64 h-64 rounded-full blur-3xl pointer-events-none opacity-20 ${
-          isLate ? 'bg-studio-danger' : 'bg-studio-success'
+          verdict.isBad ? 'bg-studio-danger' : 'bg-studio-success'
         }`}
       />
 
@@ -68,30 +80,48 @@ export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({
           <span className="text-xs text-studio-fg3 font-medium">Projected Completion</span>
           <div
             className={`text-xl font-bold font-mono mt-1 ${
-              isLate ? 'text-studio-danger font-extrabold' : 'text-studio-success'
+              verdict.isBad ? 'text-studio-danger font-extrabold' : 'text-studio-success'
             }`}
           >
             {impact ? utcTime(impact.projected_completion_utc, impact.as_of) : <Pending label="--:--:-- UTC" />}
           </div>
           <span className="text-[11px] text-studio-fg4 font-mono mt-1">
-            {impact ? (isLate ? 'Misses target deadline' : 'Inside the delivery window') : 'No projection yet'}
+            {!impact
+              ? 'No projection yet'
+              : deadlinePassed
+              ? 'Target deadline already passed'
+              : isLate
+              ? 'Misses target deadline'
+              : 'Inside the delivery window'}
           </span>
         </div>
 
         {/* Delivery status */}
         <div
           className={`border rounded-lg p-3.5 flex flex-col justify-between ${
-            isLate ? 'bg-studio-danger/10 border-studio-danger/30' : 'bg-studio-success/10 border-studio-success/30'
+            verdict.isBad
+              ? 'bg-studio-danger/10 border-studio-danger/30'
+              : 'bg-studio-success/10 border-studio-success/30'
           }`}
         >
           <span className="text-xs font-medium text-studio-fg2">Delivery Status</span>
           <div className="flex items-center space-x-2 mt-1">
-            {delayMinutes === null ? (
+            {verdict.state === 'pending' ? (
               <Pending />
-            ) : isLate ? (
+            ) : deadlinePassed ? (
+              <>
+                <AlertCircle className="w-5 h-5 text-studio-danger" />
+                <span className="text-lg font-bold font-mono text-studio-danger">DEADLINE PASSED</span>
+              </>
+            ) : isLate && (delayMinutes ?? 0) > 0 ? (
               <>
                 <AlertCircle className="w-5 h-5 text-studio-danger" />
                 <span className="text-lg font-bold font-mono text-studio-danger">+{delayMinutes}m DELAY</span>
+              </>
+            ) : isLate ? (
+              <>
+                <AlertCircle className="w-5 h-5 text-studio-danger" />
+                <span className="text-lg font-bold font-mono text-studio-danger">MISSES DEADLINE</span>
               </>
             ) : (
               <>
@@ -101,9 +131,15 @@ export const DeliveryCountdown: React.FC<DeliveryCountdownProps> = ({
             )}
           </div>
           <span className="text-[11px] font-mono text-studio-fg3 mt-1">
-            {impact
-              ? `${impact.affected_shots.toLocaleString()} shots (${impact.high_priority_shots.toLocaleString()} high priority)`
-              : 'Awaiting impact projection'}
+            {!impact
+              ? 'Awaiting impact projection'
+              : deadlinePassed
+              // Says why the delay figure is zero. The engine reports no
+              // incident-attributable delay against a deadline that has simply
+              // passed, and without this the tile reads as an unexplained
+              // contradiction of the two times above it.
+              ? 'No delay attributable to this incident — reset the world to re-anchor'
+              : `${impact.affected_shots.toLocaleString()} shots (${impact.high_priority_shots.toLocaleString()} high priority)`}
           </span>
         </div>
 
