@@ -134,10 +134,14 @@ def test_instant_queries_are_scoped_to_live_series():
         {"expr": "render_worker_frame_duration_seconds", "queryType": "instant"},
         "t01",
     )["expr"]
-    assert scoped == 'last_over_time(render_worker_frame_duration_seconds{tenant_id="t01"}[1m])'
+    assert scoped == (
+        'last_over_time(render_worker_frame_duration_seconds'
+        '{tenant_id="t01", origin="local"}[1m])'
+    )
 
-    # The tenant matcher belongs inside the selector, not outside the wrapper.
+    # Both scope matchers belong inside the selector, not outside the wrapper.
     assert scoped.index('tenant_id="t01"') < scoped.index("[1m]")
+    assert scoped.index('origin="local"') < scoped.index("[1m]")
 
     # An expression already carrying a range vector must not be wrapped:
     # rate(last_over_time(m[1m])[5m]) is not valid PromQL.
@@ -407,3 +411,56 @@ def test_injection_stays_stable_across_repeated_rewrites():
     ):
         once = fn(query, "t01")
         assert fn(once, "t01") == once, query
+
+
+def test_queries_are_pinned_to_this_deployments_origin():
+    """Verify every query is scoped to the simulator that wrote the series.
+
+    Two simulators pointed at one Grafana stack write series with identical
+    identity -- same tenant_id, same worker_id -- because service.instance.id is
+    a resource attribute and lands in target_info rather than on the series. The
+    agent collapses duplicates by newest sample, so it silently read whichever
+    simulator wrote last: a local incident vanished behind a healthy deployed
+    fleet and the investigation concluded no regression existed.
+    """
+    from src.rewriter import inject_scope_promql, inject_scope_logql, inject_scope_traceql
+
+    prom = rewrite_tool_parameters(
+        "query_prometheus", {"expr": "render_worker_gpu_utilization_ratio"}, "t01"
+    )["expr"]
+    assert 'tenant_id="t01"' in prom
+    assert 'origin="local"' in prom
+
+    logql = rewrite_tool_parameters(
+        "query_loki_logs", {"logql": '{service_name="render-sim"}'}, "t01"
+    )["logql"]
+    assert '| tenant_id="t01"' in logql
+    assert '| origin="local"' in logql
+
+    traceql = rewrite_tool_parameters(
+        "tempo_traceql-search", {"query": '{ name = "render_frame" }'}, "t01"
+    )["query"]
+    assert 'span.tenant_id = "t01"' in traceql
+    assert 'span.origin = "local"' in traceql
+
+    # The label-values tool passes a series selector rather than a bare matcher.
+    match = rewrite_tool_parameters(
+        "list_prometheus_label_values", {"label": "worker_id"}, "t01"
+    )["match"]
+    assert match == '{tenant_id="t01", origin="local"}'
+
+    # A model naming another deployment's origin is overwritten, exactly as a
+    # forged tenant matcher is.
+    forged = inject_scope_promql('up{origin="cloud"}', {"tenant_id": "t01", "origin": "local"})
+    assert 'origin="local"' in forged
+    assert 'origin="cloud"' not in forged
+
+    # Scoping stays stable across repeated rewrites.
+    for fn, query in (
+        (inject_scope_promql, "render_queue_depth_frames"),
+        (inject_scope_logql, '{job="render"} |= "error"'),
+        (inject_scope_traceql, '{ name = "render_frame" }'),
+    ):
+        scope = {"tenant_id": "t01", "origin": "local"}
+        once = fn(query, scope)
+        assert fn(once, scope) == once, query

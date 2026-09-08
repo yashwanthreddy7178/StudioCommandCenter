@@ -41,7 +41,7 @@ const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onSignedOut);
   }, [onSignedOut]);
 
-  const { lease } = useTenantLease();
+  const { lease, tenants, pool, switchTenant, refreshTenants } = useTenantLease();
   const [world, setWorld] = useState<WorldState | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [isExecutingApproval, setIsExecutingApproval] = useState<boolean>(false);
@@ -191,6 +191,16 @@ const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
     }
   };
 
+  const handleSwitchTenant = async (tenantId: string) => {
+    if (!lease || tenantId === lease.tenant_id) return;
+    // The run belongs to the world it was investigating, so it is dropped
+    // rather than carried across. useRunStream clears everything on the change.
+    setActiveRunId(null);
+    setIsApprovalModalOpen(false);
+    setWorld(null);
+    await switchTenant(tenantId);
+  };
+
   const effectiveImpact = verificationImpact || impact;
   const isRecovered = verificationImpact?.is_remediated || (world?.is_incident_active === false && activeRunId !== null && runState === 'COMPLETED');
 
@@ -198,6 +208,10 @@ const CommandCentre: React.FC<CommandCentreProps> = ({ onSignedOut }) => {
     <div className="min-h-screen bg-studio-bg text-slate-100 flex flex-col">
       <Header
         lease={lease}
+        tenants={tenants}
+        pool={pool}
+        onSwitchTenant={handleSwitchTenant}
+        onRefreshTenants={refreshTenants}
         world={world}
         runState={runState}
         onTriggerIncident={handleTriggerIncident}

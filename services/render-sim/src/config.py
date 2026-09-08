@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     log_level: str = "INFO"
 
+    # Which deployment wrote a series.
+    #
+    # Two simulators pointed at one Grafana stack produce series with identical
+    # identity -- same tenant_id, same worker_id -- because service.instance.id
+    # is a resource attribute and lands in target_info rather than on the series.
+    # The agent then collapses duplicates by newest sample and silently reads
+    # whichever simulator wrote last, so a local incident disappeared behind a
+    # healthy deployed fleet. This label makes the two genuinely distinct.
+    deployment_origin: str = "local"
+
     # Multi-tenant world counts
     num_tenant_worlds: int = 24
     enable_observer_world: bool = True

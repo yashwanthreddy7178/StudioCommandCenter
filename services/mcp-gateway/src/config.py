@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     )
 
     service_name: str = "mcp-gateway"
+
+    # Which deployment's series this gateway queries. Must match the
+    # DEPLOYMENT_ORIGIN the render-sim writing those series was started with, or
+    # every query returns nothing. Pinned server-side alongside tenant_id, so the
+    # model cannot reach another deployment's telemetry by asking for it.
+    deployment_origin: str = "local"
     port: int = 8001
     host: str = "0.0.0.0"
     log_level: str = "INFO"

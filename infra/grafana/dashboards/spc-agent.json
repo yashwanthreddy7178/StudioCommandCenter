@@ -48,7 +48,32 @@
     ]
   },
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "origin",
+        "label": "Deployment",
+        "type": "custom",
+        "query": "local,cloud",
+        "current": {
+          "text": "local",
+          "value": "local"
+        },
+        "options": [
+          {
+            "text": "local",
+            "value": "local",
+            "selected": true
+          },
+          {
+            "text": "cloud",
+            "value": "cloud",
+            "selected": false
+          }
+        ],
+        "includeAll": false,
+        "multi": false
+      }
+    ]
   },
   "panels": [
     {
@@ -170,7 +195,7 @@
         {
           "refId": "A",
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"render-sim\" && name = \"render_frame\" }",
+          "query": "{ resource.service.name = \"render-sim\" && span.origin = \"$origin\" && name = \"render_frame\" }",
           "limit": 20
         }
       ]

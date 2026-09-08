@@ -50,6 +50,27 @@
   "templating": {
     "list": [
       {
+        "name": "origin",
+        "label": "Deployment",
+        "type": "query",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(render_fleet_total_workers, origin)",
+          "refId": "origin"
+        },
+        "definition": "label_values(render_fleet_total_workers, origin)",
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {},
+        "options": [],
+        "datasource": {
+          "type": "prometheus",
+          "uid": "grafanacloud-prom"
+        }
+      },
+      {
         "name": "tenant",
         "label": "Tenant world",
         "type": "query",
@@ -128,7 +149,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "render_fleet_degraded_workers{tenant_id=\"$tenant\"}",
+          "expr": "render_fleet_degraded_workers{tenant_id=\"$tenant\", origin=\"$origin\"}",
           "instant": true,
           "legendFormat": ""
         }
@@ -185,7 +206,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "render_throughput_frames_per_minute{tenant_id=\"$tenant\"}",
+          "expr": "render_throughput_frames_per_minute{tenant_id=\"$tenant\", origin=\"$origin\"}",
           "instant": true,
           "legendFormat": ""
         }
@@ -242,7 +263,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "render_baseline_throughput_frames_per_minute{tenant_id=\"$tenant\"}",
+          "expr": "render_baseline_throughput_frames_per_minute{tenant_id=\"$tenant\", origin=\"$origin\"}",
           "instant": true,
           "legendFormat": ""
         }
@@ -299,7 +320,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "render_queue_depth_frames{tenant_id=\"$tenant\"}",
+          "expr": "render_queue_depth_frames{tenant_id=\"$tenant\", origin=\"$origin\"}",
           "instant": true,
           "legendFormat": ""
         }
@@ -380,12 +401,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "render_worker_frame_duration_seconds{tenant_id=\"$tenant\", renderer_version=\"v2.4.0\"}",
+          "expr": "render_worker_frame_duration_seconds{tenant_id=\"$tenant\", origin=\"$origin\", renderer_version=\"v2.4.0\"}",
           "legendFormat": "v2.4.0  {{worker_id}}"
         },
         {
           "refId": "B",
-          "expr": "render_worker_frame_duration_seconds{tenant_id=\"$tenant\", renderer_version=\"v2.4.1\"}",
+          "expr": "render_worker_frame_duration_seconds{tenant_id=\"$tenant\", origin=\"$origin\", renderer_version=\"v2.4.1\"}",
           "legendFormat": "v2.4.1  {{worker_id}}"
         }
       ]
@@ -465,12 +486,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "render_worker_gpu_utilization_ratio{tenant_id=\"$tenant\", renderer_version=\"v2.4.0\"}",
+          "expr": "render_worker_gpu_utilization_ratio{tenant_id=\"$tenant\", origin=\"$origin\", renderer_version=\"v2.4.0\"}",
           "legendFormat": "v2.4.0  {{worker_id}}"
         },
         {
           "refId": "B",
-          "expr": "render_worker_gpu_utilization_ratio{tenant_id=\"$tenant\", renderer_version=\"v2.4.1\"}",
+          "expr": "render_worker_gpu_utilization_ratio{tenant_id=\"$tenant\", origin=\"$origin\", renderer_version=\"v2.4.1\"}",
           "legendFormat": "v2.4.1  {{worker_id}}"
         }
       ]
@@ -570,12 +591,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "render_throughput_frames_per_minute{tenant_id=\"$tenant\"}",
+          "expr": "render_throughput_frames_per_minute{tenant_id=\"$tenant\", origin=\"$origin\"}",
           "legendFormat": "observed"
         },
         {
           "refId": "B",
-          "expr": "render_baseline_throughput_frames_per_minute{tenant_id=\"$tenant\"}",
+          "expr": "render_baseline_throughput_frames_per_minute{tenant_id=\"$tenant\", origin=\"$origin\"}",
           "legendFormat": "baseline"
         }
       ]
@@ -625,7 +646,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "render_queue_depth_frames{tenant_id=\"$tenant\"}",
+          "expr": "render_queue_depth_frames{tenant_id=\"$tenant\", origin=\"$origin\"}",
           "legendFormat": "queue depth"
         }
       ]
@@ -658,7 +679,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{service_name=\"render-sim\"} | tenant_id=`$tenant`",
+          "expr": "{service_name=\"render-sim\"} | tenant_id=`$tenant` | origin=`$origin`",
           "queryType": "range"
         }
       ]

@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Tuple
 
+from src.config import settings
+
 
 # Clause keywords whose parenthesised argument lists contain label names, not
 # metric names. Injecting a matcher into `by (renderer_version)` produces invalid
@@ -49,23 +51,31 @@ _IDENTIFIER = re.compile(r"\b[a-zA-Z_:][a-zA-Z0-9_:]*\b")
 # whose value has already been masked away.
 _MASKED = r"\x00\d+\x00"
 
-# A tenant matcher in selector position, with the surrounding comma so removing
-# it does not leave `{, foo="x"}` behind. Matches only a masked value, so the
-# label name has to sit outside a string to be stripped.
-_PROMQL_TENANT_MATCHER = re.compile(
-    r"\s*,?\s*\btenant_id\s*(?:=~|!~|!=|=)\s*" + _MASKED + r"\s*,?"
-)
+# The comparison operators a matcher can use, in any of the three languages.
+_OPS = r"(?:=~|!~|!=|=)"
 
-# The same in a LogQL pipeline, where the matcher is a label-filter stage.
-_LOGQL_TENANT_STAGE = re.compile(
-    r"\|\s*tenant_id\s*(?:=~|!~|!=|=)\s*" + _MASKED
-)
 
-# The same in TraceQL, where it is a comparison joined by && into the filter.
-_TRACEQL_TENANT_TERM = re.compile(
-    r"(?:span\.|resource\.|\.)?\btenant_id\s*(?:=~|!~|!=|=)\s*" + _MASKED
-    + r"\s*(?:&&|\|\|)?"
-)
+def _promql_matcher_re(label: str) -> "re.Pattern[str]":
+    """A matcher on one label in selector position.
+
+    Consumes the surrounding comma so removing it does not leave `{, foo="x"}`
+    behind. Matches only a masked value, so the label name has to sit outside a
+    string to be stripped.
+    """
+    return re.compile(r"\s*,?\s*\b" + re.escape(label) + r"\s*" + _OPS + r"\s*" + _MASKED + r"\s*,?")
+
+
+def _logql_stage_re(label: str) -> "re.Pattern[str]":
+    """The same in a LogQL pipeline, where the matcher is a label-filter stage."""
+    return re.compile(r"\|\s*" + re.escape(label) + r"\s*" + _OPS + r"\s*" + _MASKED)
+
+
+def _traceql_term_re(label: str) -> "re.Pattern[str]":
+    """The same in TraceQL, where it is a comparison joined by && into the filter."""
+    return re.compile(
+        r"(?:span\.|resource\.|\.)?\b" + re.escape(label) + r"\s*" + _OPS + r"\s*"
+        + _MASKED + r"\s*(?:&&|\|\|)?"
+    )
 
 
 class _Masker:
@@ -109,7 +119,12 @@ def _tidy_selectors(text: str) -> str:
 
 
 def inject_tenant_promql(query: str, tenant_id: str) -> str:
-    """Constrains every metric selector in a PromQL expression to one tenant.
+    """Constrains every metric selector in a PromQL expression to one tenant."""
+    return inject_scope_promql(query, {"tenant_id": tenant_id} if tenant_id else {})
+
+
+def inject_scope_promql(query: str, scope: Dict[str, str]) -> str:
+    """Constrains every metric selector in a PromQL expression to a label scope.
 
     Handles real expressions, not just bare metric names: aggregations, grouping
     clauses, function calls and range selectors all appear once a model is
@@ -118,22 +133,29 @@ def inject_tenant_promql(query: str, tenant_id: str) -> str:
     `avg(m) by (renderer_version)` constrains `m` and leaves the grouping label
     untouched.
 
-    Any tenant matcher already in the expression is removed before ours is added,
+    Any scope matcher already in the expression is removed before ours is added,
     so the result is the same whether the model supplied one, supplied a
-    different tenant's, or supplied none. Re-injecting is therefore idempotent.
+    different value, or supplied none. Re-injecting is therefore idempotent.
+
+    The scope is more than the tenant: `origin` separates the simulator that
+    wrote a series from any other deployment writing the same tenant and worker
+    ids into the same Grafana stack.
     """
-    if not query or not tenant_id:
+    scope = {k: v for k, v in scope.items() if v}
+    if not query or not scope:
         return query
 
-    matcher = f'tenant_id="{tenant_id}"'
+    matcher = ", ".join(f'{label}="{value}"' for label, value in scope.items())
     masker = _Masker()
 
     # Mask spans that must never be rewritten, innermost concern first.
     masked = masker.mask(_STRING_LITERAL, query)
 
-    # Drop any tenant matcher the caller supplied. Its value is masked by now, so
+    # Drop any scope matcher the caller supplied. Its value is masked by now, so
     # only a real matcher outside a string can match here.
-    masked = _tidy_selectors(_PROMQL_TENANT_MATCHER.sub("", masked))
+    for label in scope:
+        masked = _promql_matcher_re(label).sub("", masked)
+    masked = _tidy_selectors(masked)
 
     masked = masker.mask(_GROUPING_CLAUSE, masked)
 
@@ -196,39 +218,49 @@ def enforce_recency(expr: str) -> str:
 
 
 def inject_tenant_logql(query: str, tenant_id: str) -> str:
-    """Constrains a LogQL query to one tenant.
+    """Constrains a LogQL query to one tenant."""
+    return inject_scope_logql(query, {"tenant_id": tenant_id} if tenant_id else {})
+
+
+def inject_scope_logql(query: str, scope: Dict[str, str]) -> str:
+    """Constrains a LogQL query to a label scope.
 
     OTLP log record attributes arrive in Loki as structured metadata, not as
-    stream labels, so `tenant_id` has to be applied as a pipeline label filter.
-    Adding it inside the stream selector instead matches no stream at all, which
+    stream labels, so these have to be applied as pipeline label filters. Adding
+    them inside the stream selector instead matches no stream at all, which
     silently returns an empty result rather than an isolated one.
 
-    As in the PromQL case, any tenant filter already present is stripped first,
+    As in the PromQL case, any matching filter already present is stripped first,
     so a filter the model wrote cannot stand in for the one the gateway owes.
     """
-    if not query or not tenant_id:
+    scope = {k: v for k, v in scope.items() if v}
+    if not query or not scope:
         return query
 
     masker = _Masker()
     masked = masker.mask(_STRING_LITERAL, query)
-    masked = _LOGQL_TENANT_STAGE.sub("", masked)
+    for label in scope:
+        masked = _logql_stage_re(label).sub("", masked)
     # Removing a stage leaves its surrounding whitespace behind, and the insert
     # below adds its own. Without collapsing, re-injecting the same query grows a
     # space each time and the round-trip is no longer stable. Safe here because
     # every string literal is masked, so no run of spaces inside one is touched.
     masked = re.sub(r"\s+", " ", masked).strip()
 
-    tenant_filter = f'| tenant_id="{tenant_id}"'
+    scope_filter = " ".join(f'| {label}="{value}"' for label, value in scope.items())
 
-    # The label filter belongs immediately after the stream selector, before any
+    # The label filters belong immediately after the stream selector, before any
     # line filters already present in the pipeline.
     closing = masked.find("}")
     if masked.lstrip().startswith("{") and closing != -1:
         head, tail = masked[: closing + 1], masked[closing + 1:]
-        return masker.restore(f"{head} {tenant_filter}{tail}".rstrip())
+        return masker.restore(f"{head} {scope_filter}{tail}".rstrip())
 
-    # A bare pipeline with no stream selector cannot be safely constrained.
-    return masker.restore(f'{{tenant_id="{tenant_id}"}} {masked}'.strip())
+    # A bare pipeline with no stream selector cannot be safely constrained, so
+    # the first scope label becomes the stream selector and the rest filter it.
+    first_label, first_value = next(iter(scope.items()))
+    rest = " ".join(f'| {label}="{value}"' for label, value in list(scope.items())[1:])
+    return masker.restore(f'{{{first_label}="{first_value}"}} {rest} {masked}'.strip())
 
 
 def inject_tenant_traceql(query: str, tenant_id: str) -> str:
@@ -246,14 +278,21 @@ def inject_tenant_traceql(query: str, tenant_id: str) -> str:
     so `{ name = "tenant_id" }` skipped injection entirely and read every
     tenant's spans.
     """
-    if not query or not tenant_id:
+    return inject_scope_traceql(query, {"tenant_id": tenant_id} if tenant_id else {})
+
+
+def inject_scope_traceql(query: str, scope: Dict[str, str]) -> str:
+    """Constrains a TraceQL query to a label scope. See inject_tenant_traceql."""
+    scope = {k: v for k, v in scope.items() if v}
+    if not query or not scope:
         return query
 
-    matcher = f'span.tenant_id = "{tenant_id}"'
+    matcher = " && ".join(f'span.{label} = "{value}"' for label, value in scope.items())
 
     masker = _Masker()
     masked = masker.mask(_STRING_LITERAL, query)
-    masked = _TRACEQL_TENANT_TERM.sub("", masked)
+    for label in scope:
+        masked = _traceql_term_re(label).sub("", masked)
     # Remove a && or || left dangling where a term used to be.
     masked = re.sub(r"\{\s*(?:&&|\|\|)\s*", "{ ", masked)
     masked = re.sub(r"\s*(?:&&|\|\|)\s*\}", " }", masked)
@@ -270,25 +309,42 @@ def inject_tenant_traceql(query: str, tenant_id: str) -> str:
     return masker.restore("{ " + matcher + " }" + tail)
 
 
+def query_scope(tenant_id: str) -> Dict[str, str]:
+    """The labels every query is pinned to.
+
+    `origin` sits alongside the tenant because two simulators pointed at one
+    Grafana stack write series with identical identity. Without it a local
+    incident and a healthy deployed fleet occupy the same series, the freshest
+    sample wins, and the investigation silently reads the wrong farm. The
+    gateway pins its own deployment's origin for the same reason it pins the
+    tenant: neither is the model's to choose.
+    """
+    scope: Dict[str, str] = {"tenant_id": tenant_id}
+    if settings.deployment_origin:
+        scope["origin"] = settings.deployment_origin
+    return scope
+
+
 def rewrite_tool_parameters(tool_name: str, params: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
-    """Rewrites parameters for MCP tools to strictly enforce tenant isolation."""
+    """Rewrites parameters for MCP tools to strictly enforce query scoping."""
     rewritten = params.copy()
+    scope = query_scope(tenant_id)
 
     # PromQL query tools
     if tool_name in {"query_prometheus", "query_prometheus_histogram"}:
         for field in ("query", "expr"):
             if field in rewritten and isinstance(rewritten[field], str):
-                scoped = inject_tenant_promql(rewritten[field], tenant_id)
-                # Recency is applied after tenant injection so the label matcher
-                # ends up inside the selector rather than outside the wrapper.
+                scoped = inject_scope_promql(rewritten[field], scope)
+                # Recency is applied after scope injection so the label matchers
+                # end up inside the selector rather than outside the wrapper.
                 rewritten[field] = enforce_recency(scoped)
 
     # LogQL query tools
     elif tool_name in {"query_loki_logs", "query_loki_stats"}:
         if "query" in rewritten and isinstance(rewritten["query"], str):
-            rewritten["query"] = inject_tenant_logql(rewritten["query"], tenant_id)
+            rewritten["query"] = inject_scope_logql(rewritten["query"], scope)
         if "logql" in rewritten and isinstance(rewritten["logql"], str):
-            rewritten["logql"] = inject_tenant_logql(rewritten["logql"], tenant_id)
+            rewritten["logql"] = inject_scope_logql(rewritten["logql"], scope)
 
     # Tempo trace search tools.
     #
@@ -299,10 +355,11 @@ def rewrite_tool_parameters(tool_name: str, params: Dict[str, Any], tenant_id: s
     elif tool_name in {"tempo_traceql-search", "traceql_search", "search_tempo_traces"}:
         for field in ("query", "traceql", "q"):
             if field in rewritten and isinstance(rewritten[field], str):
-                rewritten[field] = inject_tenant_traceql(rewritten[field], tenant_id)
+                rewritten[field] = inject_scope_traceql(rewritten[field], scope)
 
-    # Label values query tools (ensure tenant_id filter is passed)
+    # Label values query tools (ensure the scope is passed as a series selector)
     elif tool_name in {"list_prometheus_label_values", "list_loki_label_values"}:
-        rewritten["match"] = f'tenant_id="{tenant_id}"'
+        selector = ", ".join(f'{label}="{value}"' for label, value in scope.items())
+        rewritten["match"] = "{" + selector + "}"
 
     return rewritten

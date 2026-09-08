@@ -339,6 +339,7 @@ class OTelTelemetryExporter:
         attributes = {
             "event": event,
             "tenant_id": world.tenant_id,
+                    "origin": settings.deployment_origin,
             "renderer_version": world.renderer_version,
             "tile_size": world.tile_size,
             "worker_ids": ",".join(targets),
@@ -367,6 +368,9 @@ class OTelTelemetryExporter:
         """
         return {
             "tenant_id": world.tenant_id,
+            # Separates this simulator's series from another deployment writing
+            # the same tenant and worker ids into the same Grafana stack.
+            "origin": settings.deployment_origin,
             "worker_id": worker.worker_id,
             "renderer_version": worker.renderer_version,
             "gpu_type": worker.gpu_type,
@@ -392,6 +396,7 @@ class OTelTelemetryExporter:
                     float(extract(world)),
                     {
                         "tenant_id": world.tenant_id,
+                    "origin": settings.deployment_origin,
                         "production_id": world.production_id,
                     },
                 )
@@ -452,6 +457,7 @@ class OTelTelemetryExporter:
                 "timestamp": now.isoformat(),
                 "labels": {
                     "tenant_id": world.tenant_id,
+                    "origin": settings.deployment_origin,
                     "worker_id": wid,
                     "renderer_version": worker.renderer_version,
                     "gpu_type": worker.gpu_type,
@@ -472,6 +478,7 @@ class OTelTelemetryExporter:
             "timestamp": now.isoformat(),
             "labels": {
                 "tenant_id": world.tenant_id,
+                    "origin": settings.deployment_origin,
                 "production_id": world.production_id,
             },
             "metrics": {
@@ -511,6 +518,7 @@ class OTelTelemetryExporter:
                 "timestamp": now.isoformat(),
                 "labels": {
                     "tenant_id": world.tenant_id,
+                    "origin": settings.deployment_origin,
                     "worker_id": wid,
                     "level": level,
                 },
@@ -520,6 +528,7 @@ class OTelTelemetryExporter:
             if self._farm_logger is not None:
                 attributes = {
                     "tenant_id": world.tenant_id,
+                    "origin": settings.deployment_origin,
                     "worker_id": wid,
                     "renderer_version": worker.renderer_version,
                     "gpu_type": worker.gpu_type,

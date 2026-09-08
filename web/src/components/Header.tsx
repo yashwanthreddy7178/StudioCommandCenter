@@ -1,9 +1,17 @@
 import React from 'react';
 import { Film, Shield, RotateCcw, AlertTriangle, Play } from 'lucide-react';
 import { TenantLease, WorldState, RunState } from '../types/api';
+import { PoolStatus, TenantOption } from '../hooks/useTenantLease';
 
 interface HeaderProps {
   lease: TenantLease | null;
+  /** Worlds available to switch into, and whether each is taken. */
+  tenants?: TenantOption[];
+  /** How much of the pool is left, or null when it could not be read. */
+  pool?: PoolStatus | null;
+  onSwitchTenant?: (tenantId: string) => void;
+  /** Re-reads availability, so the list is current at the moment of choosing. */
+  onRefreshTenants?: () => void;
   world: WorldState | null;
   runState: RunState;
   onTriggerIncident: () => void;
@@ -14,6 +22,10 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   lease,
+  tenants = [],
+  pool = null,
+  onSwitchTenant,
+  onRefreshTenants,
   world,
   onTriggerIncident,
   onResetWorld,
@@ -49,13 +61,56 @@ export const Header: React.FC<HeaderProps> = ({
           {lease && (
             <div className="flex items-center space-x-2 bg-studio-card border border-studio-border px-3 py-1.5 rounded-md text-xs font-mono">
               <Shield className="w-3.5 h-3.5 text-studio-cyan" />
-              <span className="text-slate-400">Tenant:</span>
-              <span className="font-semibold text-white uppercase">{lease.tenant_id}</span>
+              <label htmlFor="tenant-select" className="text-slate-400">
+                Tenant:
+              </label>
+              {onSwitchTenant && tenants.length > 0 ? (
+                <select
+                  id="tenant-select"
+                  value={lease.tenant_id}
+                  onChange={(e) => onSwitchTenant(e.target.value)}
+                  onMouseDown={onRefreshTenants}
+                  onFocus={onRefreshTenants}
+                  className="bg-transparent font-semibold text-white uppercase focus:outline-none cursor-pointer"
+                  title="Switch to another tenant world"
+                >
+                  {/* The current world is always listed, even in observer mode
+                      where it is not one of the writable options. */}
+                  {!tenants.some((t) => t.tenant_id === lease.tenant_id) && (
+                    <option value={lease.tenant_id}>{lease.tenant_id}</option>
+                  )}
+                  {tenants.map((t) => (
+                    <option key={t.tenant_id} value={t.tenant_id} className="bg-studio-card">
+                      {t.tenant_id}
+                      {t.leased && t.tenant_id !== lease.tenant_id ? ' (in use)' : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="font-semibold text-white uppercase">{lease.tenant_id}</span>
+              )}
               {lease.is_observer && (
-                <span className="bg-studio-warning/20 text-studio-warning px-1.5 py-0.5 rounded text-[10px]">
+                <span
+                  className="bg-studio-warning/20 text-studio-warning px-1.5 py-0.5 rounded text-[10px]"
+                  title={
+                    pool
+                      ? `The tenant pool was full. ${pool.observerSessions} session(s) share this world.`
+                      : 'The tenant pool was full when this session started.'
+                  }
+                >
                   OBSERVER
+                  {pool && pool.observerSessions > 1 ? ` ×${pool.observerSessions}` : ''}
                 </span>
               )}
+              {/* Visible without opening the picker: the number a judge wants is
+                  whether any world is left, not which ones. Absent rather than
+                  guessed when availability could not be read. */}
+              <span
+                className="text-slate-500 border-l border-studio-border pl-2"
+                title="Tenant worlds currently free"
+              >
+                {pool ? `${pool.free}/${pool.total} free` : '--/-- free'}
+              </span>
             </div>
           )}
 

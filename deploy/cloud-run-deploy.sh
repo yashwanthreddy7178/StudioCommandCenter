@@ -82,6 +82,6 @@ exec gcloud run deploy "${SERVICE}" \
     --set-env-vars "GRAFANA_OTLP_INSTANCE_ID=${GRAFANA_OTLP_INSTANCE_ID:-}" \
     --set-env-vars "NUM_TENANT_WORLDS=24" \
     --set-env-vars "TEMPO_SEARCH_AVAILABLE=true" \
-    --set-env-vars "ENABLE_METRIC_DISCOVERY=false"     --set-env-vars "APP_USERNAME=${APP_USERNAME:-supervisor}" \
+    --set-env-vars "ENABLE_METRIC_DISCOVERY=false"     --set-env-vars "DEPLOYMENT_ORIGIN=cloud"     --set-env-vars "APP_USERNAME=${APP_USERNAME:-supervisor}" \
     --set-secrets "${SECRET_FLAGS}" \
     --quiet

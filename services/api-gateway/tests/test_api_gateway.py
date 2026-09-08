@@ -265,3 +265,133 @@ def test_every_internal_http_client_is_authenticated():
     assert not unauthenticated, (
         "these clients call another service without a credential: " + "; ".join(unauthenticated)
     )
+
+
+@pytest.mark.asyncio
+async def test_a_session_can_choose_and_switch_tenant_worlds():
+    """Verify an operator can pick a world rather than taking whichever is free.
+
+    Needed once a local stack and a deployed one share a Grafana instance: they
+    have to sit on separate tenants to stay out of each other's telemetry.
+    """
+    from src.lease import lease_manager
+
+    manager = type(lease_manager)()
+
+    chosen = await manager.acquire_lease(session_id="sess-picky", preferred_tenant_id="t07")
+    assert chosen.tenant_id == "t07"
+
+    # Asking again for the same world is idempotent, not a second lease.
+    again = await manager.acquire_lease(session_id="sess-picky", preferred_tenant_id="t07")
+    assert again.tenant_id == "t07"
+
+    # Switching releases the old world so it returns to the pool.
+    moved = await manager.acquire_lease(session_id="sess-picky", preferred_tenant_id="t09")
+    assert moved.tenant_id == "t09"
+    assert await manager.holds_lease("t09", "sess-picky") is True
+    assert await manager.holds_lease("t07", "sess-picky") is False
+
+    # A world someone else holds falls back rather than failing or stealing it.
+    await manager.acquire_lease(session_id="sess-other", preferred_tenant_id="t11")
+    fell_back = await manager.acquire_lease(session_id="sess-third", preferred_tenant_id="t11")
+    assert fell_back.tenant_id != "t11"
+    assert await manager.holds_lease("t11", "sess-other") is True
+
+    # No preference keeps the original behaviour: first free world.
+    plain = await manager.acquire_lease(session_id="sess-plain")
+    assert plain.tenant_id in manager.writable_tenants()
+
+
+@pytest.mark.asyncio
+async def test_tenants_endpoint_reports_availability():
+    """Verify the picker can see which worlds are taken."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=_auth()
+    ) as client:
+        acquired = (await client.post(
+            "/leases/acquire", json={"session_id": "sess-lister", "preferred_tenant_id": "t15"}
+        )).json()
+
+        res = await client.get("/tenants")
+        assert res.status_code == 200
+        rows = res.json()["tenants"]
+        assert len(rows) == settings.num_tenant_worlds
+
+        by_id = {row["tenant_id"]: row for row in rows}
+        assert by_id[acquired["tenant_id"]]["leased"] is True
+
+
+@pytest.mark.asyncio
+async def test_observer_sessions_cannot_execute_remediations():
+    """Verify the documented observer rule is actually enforced.
+
+    docs/architecture.md has said since the design was written that observers
+    "can run investigations, but cannot execute remediations". `is_observer` was
+    set on the lease and never read anywhere, so an overflow session could apply
+    a rollback to the world every other overflow session was watching.
+    """
+    from src.lease import lease_manager
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=_auth()
+    ) as client:
+        # Fill the writable pool so the next session overflows.
+        for i in range(settings.num_tenant_worlds):
+            await client.post("/leases/acquire", json={"session_id": f"sess-fill-{i}"})
+
+        overflow = (await client.post(
+            "/leases/acquire", json={"session_id": "sess-watcher"}
+        )).json()
+        assert overflow["is_observer"] is True
+        assert overflow["tenant_id"] == "observer"
+
+        # The lease is real, so the ownership check passes...
+        assert await lease_manager.holds_lease("observer", "sess-watcher") is True
+
+        # ...but approving a remediation is refused on the kind of lease it is.
+        res = await client.post("/runs/run-x/approve", json={
+            "run_id": "run-x",
+            "option_id": "opt-01",
+            "tenant_id": "observer",
+            "user_id": "usr-watcher",
+            "session_id": "sess-watcher",
+        })
+        assert res.status_code == 403
+        assert "Observer sessions cannot execute remediations" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_tenants_endpoint_counts_the_pool_and_observers():
+    """Verify the availability counts are measured rather than asserted.
+
+    `observer_sessions` replaced a hardcoded `observer_available: True` -- true,
+    since observer mode is unbounded, but a constant dressed as data. An
+    overflow session should be able to see how many others share its world.
+    """
+    from src.lease import lease_manager
+
+    manager = type(lease_manager)()
+    total = settings.num_tenant_worlds
+
+    # Nothing leased yet.
+    active = await manager.get_active_leases()
+    assert active == []
+
+    await manager.acquire_lease(session_id="sess-a", preferred_tenant_id="t01")
+    await manager.acquire_lease(session_id="sess-b", preferred_tenant_id="t02")
+    active = await manager.get_active_leases()
+    taken = {lease.tenant_id for lease in active if not lease.is_observer}
+    assert taken == {"t01", "t02"}
+    assert len(manager.writable_tenants()) - len(taken) == total - 2
+
+    # Overflow: fill the rest, then add two observers.
+    for i in range(3, total + 1):
+        await manager.acquire_lease(session_id=f"sess-fill-{i}")
+    first = await manager.acquire_lease(session_id="sess-watch-1")
+    second = await manager.acquire_lease(session_id="sess-watch-2")
+    assert first.is_observer and second.is_observer
+
+    active = await manager.get_active_leases()
+    assert sum(1 for lease in active if lease.is_observer) == 2
+    # Observers do not consume a writable world.
+    assert len({lease.tenant_id for lease in active if not lease.is_observer}) == total

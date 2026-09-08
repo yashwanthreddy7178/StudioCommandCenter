@@ -5,6 +5,7 @@ Starts all backend microservices and displays structured status.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -25,6 +26,14 @@ SERVICES = [
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--no-reload",
+        action="store_true",
+        help="start without auto-reload, as the container does",
+    )
+    reload = not parser.parse_args().no_reload
+
     print()
     print("=" * 70)
     print(" Studio Production Commander - Local Microservices Launcher")
@@ -53,6 +62,16 @@ def main() -> None:
                 "--log-level",
                 "warning",
             ]
+            # Without this, edits do not reach a running stack and the symptom is
+            # baffling: routes that exist on disk return 404, and middleware that
+            # is plainly there does not run. Watches the service and the shared
+            # package, which is where most cross-cutting changes land.
+            if reload:
+                cmd += [
+                    "--reload",
+                    "--reload-dir", str(service_dir / "src"),
+                    "--reload-dir", str(REPO_ROOT / "services" / "common"),
+                ]
             proc = subprocess.Popen(cmd, env=env, cwd=str(service_dir))
             processes.append((name, proc, port))
             time.sleep(0.5)

@@ -73,6 +73,9 @@ async def login(req: LoginRequest) -> Dict[str, Any]:
 class LeaseAcquireRequest(BaseModel):
     session_id: str
     user_id: str = "usr-coordinator"
+    # Which world to work in. Unset takes whichever is free, which is the
+    # original behaviour; naming one lets an operator switch deliberately.
+    preferred_tenant_id: Optional[str] = None
 
 
 class LeaseHeartbeatRequest(BaseModel):
@@ -114,7 +117,11 @@ async def readyz() -> Dict[str, Any]:
 @app.post("/leases/acquire", response_model=TenantLease)
 async def acquire_lease(req: LeaseAcquireRequest) -> TenantLease:
     """Assigns an isolated tenant world or attaches in observer mode."""
-    lease = await lease_manager.acquire_lease(session_id=req.session_id, user_id=req.user_id)
+    lease = await lease_manager.acquire_lease(
+        session_id=req.session_id,
+        user_id=req.user_id,
+        preferred_tenant_id=req.preferred_tenant_id,
+    )
     return lease
 
 
@@ -130,6 +137,32 @@ async def release_lease(req: LeaseHeartbeatRequest) -> Dict[str, Any]:
     """Releases tenant lease back to pool."""
     success = await lease_manager.release_lease(tenant_id=req.tenant_id, session_id=req.session_id)
     return {"success": success, "tenant_id": req.tenant_id}
+
+
+@app.get("/tenants", response_model=Dict[str, Any])
+async def list_tenants() -> Dict[str, Any]:
+    """Lists the tenant worlds and which are currently taken.
+
+    Serves the tenant picker. Availability is a snapshot rather than a promise:
+    a world free when this was read can be leased by the time the switch is
+    attempted, which is why acquiring falls back rather than failing.
+    """
+    active = await lease_manager.get_active_leases()
+    taken = {lease.tenant_id for lease in active if not lease.is_observer}
+    tenants = [
+        {"tenant_id": tenant_id, "leased": tenant_id in taken}
+        for tenant_id in lease_manager.writable_tenants()
+    ]
+    return {
+        "tenants": tenants,
+        "free": sum(1 for row in tenants if not row["leased"]),
+        "total": len(tenants),
+        # Counted, not asserted. This field was a hardcoded `observer_available:
+        # True` -- accurate, since observer mode is unbounded, but a constant
+        # dressed as data. An overflow session should be able to see how many
+        # others are sharing the world with it.
+        "observer_sessions": sum(1 for lease in active if lease.is_observer),
+    }
 
 
 @app.get("/leases", response_model=List[TenantLease])
@@ -228,6 +261,23 @@ async def get_run(run_id: str) -> Dict[str, Any]:
 async def approve_run_action(run_id: str, req: ApprovalRequest) -> Dict[str, Any]:
     """Intake endpoint for human approval of a remediation option."""
     await _require_lease(req.tenant_id, req.session_id)
+
+    # Observer sessions are overflow: the pool was full when they arrived, so
+    # they share one world with every other overflow session. Executing a
+    # remediation there changes the fleet underneath everyone else watching it.
+    # docs/architecture.md has said observers cannot execute remediations since
+    # the design was written; nothing enforced it until now, because is_observer
+    # was set on the lease and never read.
+    lease = await lease_manager.get_lease(req.tenant_id, req.session_id)
+    if lease is not None and lease.is_observer:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Observer sessions cannot execute remediations. The tenant pool "
+                "was full, so this session shares a world with other observers. "
+                "Investigations are still available."
+            ),
+        )
 
     # Look up run to get the selected option details
     try:

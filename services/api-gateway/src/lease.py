@@ -19,22 +19,51 @@ class TenantLeaseManager:
         self._leases: Dict[str, TenantLease] = {} # tenant_id -> TenantLease
         self._lock = asyncio.Lock()
 
-    async def acquire_lease(self, session_id: str, user_id: str = "usr-coordinator") -> TenantLease:
-        """Assigns an available tenant world or attaches in observer mode."""
+    def writable_tenants(self) -> List[str]:
+        """Every tenant world a session can be assigned, in order."""
+        return [f"t{i:02d}" for i in range(1, settings.num_tenant_worlds + 1)]
+
+    async def acquire_lease(
+        self,
+        session_id: str,
+        user_id: str = "usr-coordinator",
+        preferred_tenant_id: Optional[str] = None,
+    ) -> TenantLease:
+        """Assigns a tenant world, honouring a request for a specific one.
+
+        `preferred_tenant_id` exists so an operator can choose which world to
+        work in rather than taking whichever happened to be free. Two people
+        demonstrating at once need to be told apart, and a local stack sharing a
+        Grafana instance with a deployed one wants a tenant of its own. A
+        preference that is taken by someone else falls back to the normal search
+        rather than failing: the point is to pick when you can, not to queue.
+        """
         async with self._lock:
             now = utc_now()
             ttl = timedelta(seconds=settings.tenant_lease_ttl_sec)
 
-            # 1. Check if this session already holds an active lease
+            # 1. Check if this session already holds an active lease.
             for tenant_id, lease in self._leases.items():
                 if lease.session_id == session_id and lease.expires_at > now:
+                    # A session asking for a different world releases the one it
+                    # holds; without this the early return below would hand back
+                    # the old lease and a tenant switch would silently do nothing.
+                    if preferred_tenant_id and lease.tenant_id != preferred_tenant_id:
+                        held = self._leases.get(preferred_tenant_id)
+                        if held is None or held.expires_at <= now or held.session_id == session_id:
+                            del self._leases[tenant_id]
+                            break
                     lease.heartbeat_at = now
                     lease.expires_at = now + ttl
                     return lease
 
-            # 2. Look for an available writable tenant from t01 to t24
-            for i in range(1, settings.num_tenant_worlds + 1):
-                tenant_id = f"t{i:02d}"
+            # 2. The requested world first, then the rest in order.
+            candidates = self.writable_tenants()
+            if preferred_tenant_id in candidates:
+                candidates.remove(preferred_tenant_id)
+                candidates.insert(0, preferred_tenant_id)
+
+            for tenant_id in candidates:
                 existing = self._leases.get(tenant_id)
                 if existing is None or existing.expires_at <= now:
                     new_lease = TenantLease(
@@ -106,6 +135,18 @@ class TenantLeaseManager:
                 and lease.session_id == session_id
                 and lease.expires_at > utc_now()
             )
+
+    async def get_lease(self, tenant_id: str, session_id: str) -> Optional[TenantLease]:
+        """Returns the live lease this session holds on a tenant, if any.
+
+        `holds_lease` answers yes or no; callers that need to know *what kind* of
+        lease it is -- writable or observer -- need the record itself.
+        """
+        async with self._lock:
+            lease = self._leases.get(self._key(tenant_id, session_id))
+            if lease and lease.session_id == session_id and lease.expires_at > utc_now():
+                return lease
+            return None
 
     async def release_lease(self, tenant_id: str, session_id: str) -> bool:
         """Releases a tenant lease back to the pool."""

@@ -168,12 +168,12 @@ def version_split_panel(
         "targets": [
             {
                 "refId": "A",
-                "expr": f'{metric}{{tenant_id="$tenant", renderer_version="v2.4.0"}}',
+                "expr": f'{metric}{{tenant_id="$tenant", origin="$origin", renderer_version="v2.4.0"}}',
                 "legendFormat": "v2.4.0  {{worker_id}}",
             },
             {
                 "refId": "B",
-                "expr": f'{metric}{{tenant_id="$tenant", renderer_version="v2.4.1"}}',
+                "expr": f'{metric}{{tenant_id="$tenant", origin="$origin", renderer_version="v2.4.1"}}',
                 "legendFormat": "v2.4.1  {{worker_id}}",
             },
         ],
@@ -232,12 +232,12 @@ def throughput_panel(pid: int, ds: str, grid: Dict[str, int]) -> Dict[str, Any]:
         "targets": [
             {
                 "refId": "A",
-                "expr": 'render_throughput_frames_per_minute{tenant_id="$tenant"}',
+                "expr": 'render_throughput_frames_per_minute{tenant_id="$tenant", origin="$origin"}',
                 "legendFormat": "observed",
             },
             {
                 "refId": "B",
-                "expr": 'render_baseline_throughput_frames_per_minute{tenant_id="$tenant"}',
+                "expr": 'render_baseline_throughput_frames_per_minute{tenant_id="$tenant", origin="$origin"}',
                 "legendFormat": "baseline",
             },
         ],
@@ -278,7 +278,7 @@ def queue_panel(pid: int, ds: str, grid: Dict[str, int]) -> Dict[str, Any]:
         "targets": [
             {
                 "refId": "A",
-                "expr": 'render_queue_depth_frames{tenant_id="$tenant"}',
+                "expr": 'render_queue_depth_frames{tenant_id="$tenant", origin="$origin"}',
                 "legendFormat": "queue depth",
             }
         ],
@@ -315,7 +315,7 @@ def logs_panel(pid: int, ds: str, grid: Dict[str, int]) -> Dict[str, Any]:
         "targets": [
             {
                 "refId": "A",
-                "expr": '{service_name="render-sim"} | tenant_id=`$tenant`',
+                "expr": '{service_name="render-sim"} | tenant_id=`$tenant` | origin=`$origin`',
                 "queryType": "range",
             }
         ],
@@ -391,8 +391,34 @@ def annotations_block() -> Dict[str, Any]:
 
 
 def tenant_variable(prom: str) -> Dict[str, Any]:
+    """Tenant and origin pickers.
+
+    `origin` exists because more than one simulator can write the same tenant
+    into one Grafana stack -- a local stack and the deployed one both default to
+    t01. Their series are distinguished only by this label, so without a picker
+    every panel overlays a healthy fleet on a degraded one and neither is
+    readable.
+    """
     return {
         "list": [
+            {
+                "name": "origin",
+                "label": "Deployment",
+                "type": "query",
+                "datasource": {"type": "prometheus", "uid": prom},
+                "query": {
+                    "qryType": 1,
+                    "query": "label_values(render_fleet_total_workers, origin)",
+                    "refId": "origin",
+                },
+                "definition": "label_values(render_fleet_total_workers, origin)",
+                "refresh": 1,
+                "sort": 1,
+                "includeAll": False,
+                "multi": False,
+                "current": {},
+                "options": [],
+            },
             {
                 "name": "tenant",
                 "label": "Tenant world",
@@ -419,24 +445,24 @@ def render_farm_dashboard(prom: str, loki: str) -> Dict[str, Any]:
     panels: List[Dict[str, Any]] = [
         stat_panel(
             1, "Degraded workers",
-            'render_fleet_degraded_workers{tenant_id="$tenant"}', prom,
+            'render_fleet_degraded_workers{tenant_id="$tenant", origin="$origin"}', prom,
             _grid(0, 0, 6, 4), unit="short",
             steps=[{"color": "green", "value": None}, {"color": "red", "value": 1}],
             description="Inferred from the fleet, never exported as a label.",
         ),
         stat_panel(
-            2, "Throughput", 'render_throughput_frames_per_minute{tenant_id="$tenant"}',
+            2, "Throughput", 'render_throughput_frames_per_minute{tenant_id="$tenant", origin="$origin"}',
             prom, _grid(6, 0, 6, 4), unit="short",
             description="Frames per minute, smoothed.",
         ),
         stat_panel(
             3, "Baseline",
-            'render_baseline_throughput_frames_per_minute{tenant_id="$tenant"}',
+            'render_baseline_throughput_frames_per_minute{tenant_id="$tenant", origin="$origin"}',
             prom, _grid(12, 0, 6, 4), unit="short",
             description="What this fleet delivers when healthy.",
         ),
         stat_panel(
-            4, "Queue depth", 'render_queue_depth_frames{tenant_id="$tenant"}',
+            4, "Queue depth", 'render_queue_depth_frames{tenant_id="$tenant", origin="$origin"}',
             prom, _grid(18, 0, 6, 4), unit="short",
             description="Frames outstanding against the delivery deadline.",
         ),
@@ -479,6 +505,31 @@ def render_farm_dashboard(prom: str, loki: str) -> Dict[str, Any]:
     }
 
 
+def origin_variable() -> Dict[str, Any]:
+    """A plain choice of deployment, for a dashboard with no Prometheus source.
+
+    Custom rather than a label_values query: this dashboard is Tempo-backed, and
+    Tempo has no cheap equivalent for enumerating a label's values.
+    """
+    return {
+        "list": [
+            {
+                "name": "origin",
+                "label": "Deployment",
+                "type": "custom",
+                "query": "local,cloud",
+                "current": {"text": "local", "value": "local"},
+                "options": [
+                    {"text": "local", "value": "local", "selected": True},
+                    {"text": "cloud", "value": "cloud", "selected": False},
+                ],
+                "includeAll": False,
+                "multi": False,
+            }
+        ]
+    }
+
+
 def agent_dashboard(tempo: str) -> Dict[str, Any]:
     panels: List[Dict[str, Any]] = [
         text_panel(
@@ -503,7 +554,11 @@ def agent_dashboard(tempo: str) -> Dict[str, Any]:
         ),
         traces_panel(
             4, tempo, _grid(12, 12, 12, 9), "Render farm frames",
-            '{ resource.service.name = "render-sim" && name = "render_frame" }',
+            # Scoped by origin: a local simulator and the deployed one both
+            # emit render_frame spans, and without this the panel interleaves
+            # frames from two different farms.
+            '{ resource.service.name = "render-sim" && span.origin = "$origin" '
+            '&& name = "render_frame" }',
             "The spans behind the trace-attribution criterion. Compare "
             "gpu_render against fetch_assets and write_output inside a frame.",
         ),
@@ -523,7 +578,7 @@ def agent_dashboard(tempo: str) -> Dict[str, Any]:
         "refresh": "30s",
         "time": {"from": "now-6h", "to": "now"},
         "annotations": annotations_block(),
-        "templating": {"list": []},
+        "templating": origin_variable(),
         "panels": panels,
     }
 
