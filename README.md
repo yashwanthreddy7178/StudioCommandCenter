@@ -331,7 +331,7 @@ python scripts/compliance_audit.py
 
 ## ⚖️ License & Compliance
 
-This project is licensed under the **Apache-2.0 License**. See [LICENSE](LICENSE) for details.
+This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
 
 **Agentic Cinema Hackathon Compliance**:
 - Built strictly using **Google Cloud AI (`google-adk`, `google-genai`)** and **Grafana Cloud MCP**.
